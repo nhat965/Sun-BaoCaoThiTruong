@@ -147,6 +147,38 @@ class SecuritiesImportResult(BaseModel):
     errors: list[str]
 
 
+class SecuritiesExplorerItem(BaseModel):
+    symbol: str
+    name: str
+    exchange: str
+    industry: str | None = None
+    sector: str | None = None
+    listing_status: Literal["active", "inactive", "delisted", "suspended"]
+    currency: str
+    latest_price: float | None = None
+    change_percent: float | None = None
+    volume: int | None = None
+    trading_value: float | None = None
+    pe: float | None = None
+    pb: float | None = None
+    price_updated_at: datetime | None = None
+    price_source: str | None = None
+    price_source_mode: str | None = None
+    registry_updated_at: datetime
+
+
+class SecuritiesExplorerResponse(BaseModel):
+    items: list[SecuritiesExplorerItem]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+    total_pages: int = Field(ge=0)
+    available_exchanges: list[str] = Field(default_factory=list)
+    available_sectors: list[str] = Field(default_factory=list)
+    available_listing_statuses: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class CorporateAction(BaseModel):
     action_type: Literal[
         "stock_split", "cash_dividend", "bonus_share", "rights_issue", "other"

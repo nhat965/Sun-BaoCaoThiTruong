@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -85,24 +85,22 @@ class SecuritiesRepository:
 
     def search(self, query: str, limit: int = 20, include_inactive: bool = False) -> list[Security]:
         normalized = normalize_vietnamese(query)
-        rows = self.session.scalars(select(SecurityRecord).order_by(SecurityRecord.symbol)).all()
-        matches = []
-        for row in rows:
-            if not include_inactive and row.listing_status != "active":
-                continue
-            aliases = json.loads(row.aliases_json)
-            haystack = " ".join(
-                [
-                    row.symbol.lower(),
-                    row.normalized_name,
-                    *[normalize_vietnamese(a) for a in aliases],
-                ]
+        statement = select(SecurityRecord)
+        if not include_inactive:
+            statement = statement.where(SecurityRecord.listing_status == "active")
+        if normalized:
+            pattern = f"%{normalized}%"
+            statement = statement.where(
+                or_(
+                    func.lower(SecurityRecord.symbol).like(pattern),
+                    SecurityRecord.normalized_name.like(pattern),
+                    func.lower(SecurityRecord.aliases_json).like(pattern),
+                )
             )
-            if normalized in haystack:
-                matches.append(security_schema(row))
-            if len(matches) >= limit:
-                break
-        return matches
+        rows = self.session.scalars(
+            statement.order_by(SecurityRecord.symbol).limit(limit)
+        ).all()
+        return [security_schema(row) for row in rows]
 
     def upsert(self, security: Security) -> tuple[Security, bool]:
         row = self.session.scalar(

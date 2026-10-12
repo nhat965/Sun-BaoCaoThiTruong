@@ -66,6 +66,7 @@ Tìm kiếm không dấu và nhập danh mục chứng khoán từ nguồn đư�
 
 ```bash
 curl "http://localhost:8000/api/v1/stocks/search?q=hoa%20phat"
+curl "http://localhost:8000/api/v1/securities?q=hoa%20phat&exchange=HOSE&sort_by=volume&sort_order=desc&page=1&page_size=20"
 curl -X POST http://localhost:8000/api/v1/securities/import \
   -H "Authorization: Bearer $ADMIN_API_TOKEN" \
   -H "Content-Type: text/csv" -H "X-Source-Name: authorized-export" \
@@ -76,6 +77,12 @@ curl -X POST http://localhost:8000/api/v1/securities/import/xlsx \
   -H "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" \
   -H "X-Source-Name: authorized-workbook" --data-binary @securities.xlsx
 ```
+
+`GET /api/v1/securities` lọc, sắp xếp và phân trang trực tiếp trong cơ sở dữ liệu;
+response trả facets sàn/ngành/trạng thái cùng timestamp tạo kết quả. Trang Danh mục dùng
+API này và chỉ hiển thị giá, biến động, khối lượng, giá trị giao dịch, P/E hoặc P/B khi
+có bản ghi nguồn tương ứng. Nút ghim dùng watchlist cục bộ trong trình duyệt vì các
+watchlist dùng chung ở server là route ghi được bảo vệ bằng quyền admin.
 
 Corporate actions chỉ được lưu từ file được ủy quyền; hệ thống không tự suy đoán điều
 chỉnh giá. CSV dùng `action_type,effective_at,ratio,cash_amount,verification_status,source_url`:

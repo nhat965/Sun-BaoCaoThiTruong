@@ -7,7 +7,7 @@ Date: 2026-10-12 (Asia/Bangkok)
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 48 tests |
+| Backend `pytest -q` | PASS — 51 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
 | Clean Alembic upgrade/downgrade/re-upgrade to `0012` | PASS — temporary SQLite database |
@@ -18,6 +18,12 @@ Date: 2026-10-12 (Asia/Bangkok)
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
 
 Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+
+Task 01 browser QA verified the default 13-row registry without a query, unaccented
+`Hoa Phat` search returning HPG, HOSE and sector filters, symbol sorting, five-row
+server pagination, HPG analysis navigation, local watchlist persistence, explicit missing
+values for ACV, and layouts at 1440px and 390×844 without page-level horizontal overflow.
+The browser console contained no warnings or errors.
 
 Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate.
 

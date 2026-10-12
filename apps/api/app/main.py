@@ -76,6 +76,7 @@ from app.schemas import (
     PortfolioSummary,
     PortfolioTransactionInput,
     PriceSeries,
+    SecuritiesExplorerResponse,
     SecuritiesImportResult,
     Security,
     SocialBatchRequest,
@@ -88,6 +89,7 @@ from app.schemas import (
     WatchlistItemRequest,
     WatchlistRequest,
 )
+from app.securities_explorer import list_securities
 from app.services import AnalysisService
 from app.social import analyze_social_batch
 
@@ -419,6 +421,31 @@ async def search(
 ):
     with SessionLocal() as session:
         return SecuritiesRepository(session).search(q, limit, include_inactive)
+
+
+@app.get("/api/v1/securities", response_model=SecuritiesExplorerResponse)
+def securities_explorer(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=5, le=100),
+    q: str | None = Query(default=None, max_length=100),
+    exchange: str | None = Query(default=None, pattern="^(HOSE|HNX|UPCOM)$"),
+    sector: str | None = Query(default=None, max_length=128),
+    listing_status: str | None = Query(
+        default=None, pattern="^(active|inactive|delisted|suspended)$"
+    ),
+    sort_by: str = Query(default="symbol", pattern="^(symbol|name|price|change|volume)$"),
+    sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
+) -> SecuritiesExplorerResponse:
+    return list_securities(
+        page=page,
+        page_size=page_size,
+        query=q,
+        exchange=exchange,
+        sector=sector,
+        listing_status=listing_status,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
 
 
 @app.get("/api/v1/stocks/{symbol}", response_model=Security)

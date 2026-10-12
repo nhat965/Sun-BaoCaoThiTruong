@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3 — Securities Explorer
+
+- Added a database-paginated securities catalog with unaccented search, exchange,
+  sector and listing-status filters plus deterministic sorting.
+- Added nullable latest price/change/volume/value and stored P/E/P/B fields with explicit
+  timestamps and missing-data states.
+- Added a responsive financial table/mobile card view, local watchlist pinning and direct
+  navigation from HPG to its real analysis workspace.
+- Added API and browser regressions for discovery, filtering, sorting, pagination and
+  non-fabricated missing values.
+
 ## 0.5.2 — V4.1 M3 financial correctness
 
 - Corrected quarterly growth comparison to use the same quarter in the prior fiscal year.

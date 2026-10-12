@@ -16,6 +16,14 @@ The official [FireAnt API documentation](https://api.fireant.vn/) advertises OAu
 
 `app/data/securities_bootstrap.csv` is a visibly sourced, non-comprehensive bootstrap set. Operators can import an authorized CSV or XLSX; symbol, Vietnamese name/aliases, exchange, status, provider IDs and provenance are persisted without code changes. HNX provides an [official listing page](https://www.hnx.vn/co-phieu-etfs/chung-khoan-ny.html), but the application does not scrape it without confirmed automated-use and redistribution permission.
 
+The Securities Explorer reads only that persisted registry through database-side filters,
+sorting and pagination. Its latest price, change and volume come from the two latest valid
+stored price observations; estimated trading value is latest close multiplied by latest
+volume and is labeled as an estimate. P/E and P/B are returned only when those metrics
+exist in stored financial data. Missing values remain null and are rendered as
+`Chưa có dữ liệu`; the explorer never expands the bootstrap with generated companies or
+generated market figures.
+
 ## Corporate actions and price quality
 
 Authorized action exports can be stored with source, effective timestamp, ratio/cash amount and verification status. They are not automatically applied to historical prices. Price observations retain explicit adjusted/unadjusted provenance plus flags for zero volume, a jump over 20%, or a calendar gap over four days. The calendar-gap flag is a review signal, not proof of a missing session, because an official exchange holiday calendar is not yet connected.

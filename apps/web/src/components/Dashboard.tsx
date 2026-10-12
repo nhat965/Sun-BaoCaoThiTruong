@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResult, FinancialTrendResponse, ValuationResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
+import { SecuritiesExplorer } from "./SecuritiesExplorer";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 const money = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
@@ -97,6 +98,13 @@ export function Dashboard() {
     if (symbol.trim()) void load(symbol.trim());
   }
 
+  function openAnalysis(nextSymbol: string) {
+    setSymbol(nextSymbol);
+    void load(nextSymbol).then(() => {
+      window.requestAnimationFrame(() => document.querySelector("#research")?.scrollIntoView());
+    });
+  }
+
   async function downloadReport() {
     if (!data) return;
     const response = await fetch(`${API}/stocks/${data.security.symbol}/reports`, { method: "POST" });
@@ -161,12 +169,14 @@ export function Dashboard() {
   return <main>
     <header className="topbar">
       <a className="brand" href="#top" aria-label="Mạch Thị Trường — trang đầu">Mạch<span>/</span>Thị Trường</a>
-      <nav aria-label="Điều hướng chính"><a href="#research">Nghiên cứu</a><a href="#news">Tin liên quan</a><a href="#sources">Nguồn dữ liệu</a></nav>
+      <nav aria-label="Điều hướng chính"><a href="#securities">Danh mục</a><a href="#research">Nghiên cứu</a><a href="#news">Tin liên quan</a><a href="#sources">Nguồn dữ liệu</a></nav>
       <span className="read-only">CHỈ ĐỌC · KHÔNG GIAO DỊCH</span>
     </header>
 
+    <SecuritiesExplorer activeSymbol={data?.security.symbol ?? ""} onAnalyze={openAnalysis} />
+
     <section className="query-strip" id="top">
-      <div><p className="eyebrow">Bàn nghiên cứu cổ phiếu Việt Nam</p><h1>Đi từ dữ liệu đến luận điểm.</h1></div>
+      <div><p className="eyebrow">Bàn nghiên cứu cổ phiếu Việt Nam</p><h2 className="query-title">Đi từ dữ liệu đến luận điểm.</h2></div>
       <form onSubmit={submit} aria-label="Tìm mã cổ phiếu">
         <label htmlFor="symbol">Mã chứng khoán</label>
         <div className="search-row"><input id="symbol" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} maxLength={10} autoComplete="off" /><button className={loading ? "is-loading" : ""} disabled={loading}>{loading ? "Đang tải…" : "Phân tích →"}</button></div>

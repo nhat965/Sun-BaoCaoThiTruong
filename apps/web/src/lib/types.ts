@@ -123,3 +123,35 @@ export interface DataQualityReport {
   issues: string[];
 }
 
+export interface SecuritiesExplorerItem {
+  symbol: string;
+  name: string;
+  exchange: string;
+  industry: string | null;
+  sector: string | null;
+  listing_status: "active" | "inactive" | "delisted" | "suspended";
+  currency: string;
+  latest_price: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  trading_value: number | null;
+  pe: number | null;
+  pb: number | null;
+  price_updated_at: string | null;
+  price_source: string | null;
+  price_source_mode: string | null;
+  registry_updated_at: string;
+}
+
+export interface SecuritiesExplorerResponse {
+  items: SecuritiesExplorerItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  available_exchanges: string[];
+  available_sectors: string[];
+  available_listing_statuses: string[];
+  generated_at: string;
+}
+
