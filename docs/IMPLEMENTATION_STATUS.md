@@ -13,13 +13,17 @@
 | Circuit breaker | DONE | Shared registry across manager instances, threshold/cooldown/half-open recovery and source health persistence. |
 | Financial statement storage | PARTIAL | Validated authorized CSV pipeline and migrations `0004`; no licensed live financial provider yet. |
 | Financial ratios | DONE | Stored-period metrics include growth, average-balance ROE/ROA, ROIC, margins, EPS/BVPS, leverage, cash flow and safe valuation multiples. |
-| Relative valuation | PARTIAL | Explicit P/E + P/B bull/base/bear calculator; no verified peers, historical bands or DCF yet. |
+| Relative valuation | PARTIAL | Explicit P/E + P/B scenarios plus user-assumption DCF and sensitivity matrix; no verified peers or historical bands. |
 | Technical analysis V2 | DONE | Expanded indicators, four component scores, conflict detection and formula documentation. |
 | Fundamentals | PARTIAL | Deterministic safe calculator implemented; no licensed financial-statement connector or sector benchmark. |
 | News intelligence | PARTIAL | Configurable metadata-only RSS connectors, normalized storage, URL/title deduplication, event groups, relevance and evidence; licensed publisher feeds remain unconfigured. |
 | Research scenarios | PARTIAL | Bull/base/bear conditions and two-sided factors shown; no target price without valuation inputs. |
 | Frontend hardening | DONE | Registry search, score hierarchy, conflicts, scenarios, stored-fundamentals panel and responsive layout. |
-| Persistent job/cache scheduler | PARTIAL | Idempotent EOD jobs, retry state, job runs, watchlists and alert-rule persistence are implemented; production scheduler/worker is not deployed. |
+| Typed analyst tools | DONE | Closed tool registry, deterministic question planning and explicit unavailable-tool limitations; no arbitrary model-selected function execution. |
+| Market overview/reports | PARTIAL | Breadth, volume, estimated value, sector performance and idempotent pre/post-market snapshots are persisted; licensed index/foreign-flow feeds and production scheduler remain unavailable. |
+| Social classification | PARTIAL | Authorized submitted content receives deterministic sentiment/type/uncertainty labels; no platform scraping or live social feed. |
+| Portfolio ledger | PARTIAL | Manual/API and idempotent CSV transactions, average cost, realized/unrealized P&L and concentration are implemented; VPS remains blocked. |
+| Persistent job/cache scheduler | PARTIAL | Leased EOD jobs, heartbeats, exponential retry, snapshots, watchlists and alert-rule persistence are implemented; production scheduler/worker is not deployed. |
 | Auth/RBAC/audit security | DONE | Bearer admin/reader separation, fail-closed writes, fixed-window rate limit, trusted hosts, docs gating and audit logs. |
 | Dark mode | NOT STARTED | Current design remains light-only. |
 | Docker verification | BLOCKED | Docker engine was unavailable in the execution environment. |
@@ -32,10 +36,9 @@
 | M2 Reliable Vietnamese financial data | PARTIAL | Authorized CSV/XLSX registry and corporate-action import, persisted price-quality flags, exchange/history coverage and Yahoo development connector are traceable. Full-market synchronization, official trading calendar and licensed providers are not configured. |
 | M3 Fundamental research and valuation | PARTIAL | Deterministic metrics, like-for-like quarterly/yearly comparisons, statement scope/amendment metadata, trends, relative valuation, explicit DCF and sensitivity matrix are implemented. Verified peer/sector datasets and historical multiple bands remain unavailable. |
 | M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline, event storage, deduplication and source/category/time filtering are implemented. More than one genuinely live authorized feed is not configured. |
-| M5 AI analyst and verification | PARTIAL | Typed claims verify metric/value/unit/period/symbol/evidence and forecast support; narrative is rendered only from accepted claims. Typed tool planning and production LLM evaluation remain. |
-| M6 Social sentiment | NOT STARTED | No authorized discussion dataset supplied. |
-| M7 Daily reporting | PARTIAL | Persistent jobs and report endpoint exist; production scheduler, trading calendar and delivery channels remain. |
-| M8 Portfolio/VPS | NOT STARTED | Manual portfolio workflows are not implemented; VPS remains blocked pending official API. |
-| M9 Release readiness | PARTIAL | Local lint/tests/build/migrations pass; CI, Docker smoke and dependency scan remain. |
+| M5 AI analyst and verification | PARTIAL | Typed claims and a closed typed tool plan verify metric/value/unit/period/symbol/evidence/forecast support; production LLM evaluation remains credential-dependent. |
+| M6 Market overview and daily reporting | PARTIAL | Stored-data breadth/sector aggregation, explicit missing index/foreign-flow fields, idempotent pre/post reports and leased EOD snapshots are implemented; production delivery and official calendar remain. |
+| M7 Social and portfolio | PARTIAL | Deterministic classification and manual/CSV portfolio accounting are implemented without scraping or trading access; live social and VPS APIs remain blocked. |
+| M8 Release readiness | PARTIAL | Local lint, 48 tests, frontend build and migration cycle pass. PostgreSQL CI, dependency audit and health-gated Compose are configured; Docker smoke cannot run on this host. |
 
 Statuses are evidence-based: `COMPLETE` means implemented and locally verified, `PARTIAL` means a useful vertical slice exists with an explicit gap, and `BLOCKED` requires credentials, rights or infrastructure not provided here.

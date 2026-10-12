@@ -7,10 +7,12 @@ Date: 2026-10-12 (Asia/Bangkok)
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 41 tests |
+| Backend `pytest -q` | PASS — 48 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0010` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0012` | PASS — temporary SQLite database |
+| CI PostgreSQL migration gate | CONFIGURED — PostgreSQL 16 service, full upgrade/downgrade/re-upgrade |
+| Dependency audit gate | CONFIGURED — `pip-audit` and production `npm audit` at high severity |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
 | Impeccable UI detector | PASS — no findings in changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
@@ -18,6 +20,11 @@ Date: 2026-10-12 (Asia/Bangkok)
 Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
 
 Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate.
+
+Additional regressions verify the closed typed AI tool registry, market breadth/report
+snapshot idempotence, leased EOD ownership, exponential retry scheduling, portfolio
+average-cost accounting, oversell rejection, CSV idempotency and deterministic social
+classification with uncertainty labels.
 
 ## Live smoke test
 
@@ -32,4 +39,4 @@ This proves connectivity at that moment only. It does not establish market-data 
 - VPS portfolio data: no supported official integration supplied.
 - Docker Compose: Docker engine unavailable.
 - Production load, penetration testing, accessibility screen-reader audit and cross-browser matrix.
-- `npm audit` could not reach the registry endpoint in this environment; dependency remediation remains a release gate.
+- GitHub Actions and Docker Compose runtime were not executed locally because Docker/network infrastructure is unavailable here. The workflow now enforces PostgreSQL migrations and dependency audits on every pull request and push to `main`.

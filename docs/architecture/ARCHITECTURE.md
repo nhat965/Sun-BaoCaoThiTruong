@@ -10,6 +10,9 @@ Browser → /api/v1 → AnalysisService → ConnectorManager → Yahoo
                               ├──────→ Registry + incremental SQL storage
                               ├──────→ Admin-authenticated CSV ingestion + audit log
                               ├──────→ RSS news metadata
+                              ├──────→ Market overview + immutable daily snapshots
+                              ├──────→ Portfolio ledger + deterministic accounting
+                              ├──────→ Authorized social-content classification
                               └──────→ PDF renderer
 ```
 
@@ -37,3 +40,10 @@ The securities registry accepts authorized CSV/XLSX snapshots through the same v
 State-changing routes are admin-protected, while public valuation is calculation-only. Persistent valuation uses a separate admin route. Jobs use database compare-and-set claims plus a token, exact run ID and expiring lease. Completion and heartbeat updates match the current owner and unexpired lease, so a reclaimed job cannot be overwritten by its previous worker.
 
 The analyst provider returns typed proposed claims rather than publishable prose. `ClaimVerificationService` validates the referenced evidence, symbol, metric identity, period, unit dimension/value and forecast support. The final Vietnamese narrative is rendered deterministically from accepted claims; rejected statements never reach the answer as confirmed facts.
+
+Questions are mapped to a closed `ToolName` registry before analyst execution. Each
+tool either returns deterministic stored-data output or an explicit limitation; free-form
+provider output cannot invent or invoke a capability. Daily reports and successful EOD
+runs share immutable, unique snapshot records, while portfolio calculations replay an
+append-only transaction ledger using average cost. Social input is accepted only through
+an authenticated batch endpoint and is never scraped from third-party platforms.

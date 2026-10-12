@@ -59,6 +59,7 @@ curl "http://localhost:8000/api/v1/stocks/HPG/fundamentals/history?period_type=y
 curl "http://localhost:8000/api/v1/stocks/HPG/news?event_category=earnings&limit=20"
 curl -X POST http://localhost:8000/api/v1/stocks/HPG/reports --output HPG-report.pdf
 curl http://localhost:8000/api/v1/data-quality
+curl http://localhost:8000/api/v1/market/overview
 ```
 
 Tìm kiếm không dấu và nhập danh mục chứng khoán từ nguồn được phép:
@@ -110,6 +111,23 @@ curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/dcf/sensitivity
   -d '{"symbol":"HPG","forecast_free_cash_flows":[100,110],"discount_rates":[0.09,0.1,0.11],"terminal_growth_rates":[0.02,0.03,0.04],"net_debt":50,"shares_outstanding":10}'
 ```
 
+Tạo snapshot thị trường và quản lý danh mục thủ công (các route ghi cần admin token):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/market/reports/post_market \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl http://localhost:8000/api/v1/market/reports
+curl -X POST http://localhost:8000/api/v1/portfolios \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Danh mục dài hạn","base_currency":"VND"}'
+curl -X POST http://localhost:8000/api/v1/social/analyze \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"items":[{"symbol":"HPG","content":"HPG có thể tăng trưởng nhưng đây chỉ là dự báo","source_name":"authorized-input"}]}'
+```
+
+Danh mục là sổ giao dịch thủ công/CSV, không kết nối đặt lệnh. Phân loại social chỉ
+xử lý nội dung được người vận hành cung cấp hợp pháp và luôn trả uncertainty/limitations.
+
 Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc và giao diện hiển thị trạng thái thiếu dữ liệu. Chỉ bật `MARKET_DATA_MODE=fixture` cho demo/test; dữ liệu sẽ được dán nhãn `fixture` rõ ràng.
 
 ## Kiểm thử
@@ -119,15 +137,18 @@ cd apps/api && pytest
 cd apps/web && npm run lint && npm run build
 ```
 
+GitHub Actions lặp lại các bước này, chạy toàn bộ migration lên/xuống/lên trên
+PostgreSQL 16 và chặn dependency production có lỗ hổng mức `high` trở lên.
+
 ## Giới hạn hiện tại
 
 - Yahoo Finance không phải nguồn dữ liệu được cấp phép riêng cho sản phẩm này; cần thay bằng feed có hợp đồng trước khi phân phối thương mại.
 - Registry kèm theo chỉ là bootstrap 13 mã, được ghi nguồn rõ ràng; độ phủ đầy đủ cần file CSV được phép hoặc connector master-data có hợp đồng.
 - Trang chất lượng dữ liệu hiển thị độ phủ registry, số quan sát giá, mốc thị trường, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
-- Pipeline BCTC và công thức nền tảng đã có cho CSV được cấp phép; chưa có credential provider tài chính live, peer set, dải lịch sử hoặc DCF.
-- Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, sentiment mạng xã hội hay danh mục VPS.
+- Pipeline BCTC, công thức nền tảng và DCF theo giả định người dùng đã có; chưa có credential provider tài chính live, peer set hoặc dải định giá lịch sử.
+- Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, live social feed hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.
-- Jobs EOD, watchlist và alert-rule đã có persistence/idempotency; cần worker/scheduler production để chạy định kỳ.
+- Jobs EOD, watchlist, alert-rule và daily snapshot đã có lease/idempotency/retry; cần worker/scheduler production để chạy định kỳ.
 - PDF dùng font hệ thống và có thể bỏ dấu khi môi trường thiếu font Unicode tương thích.
 
 Xem [implementation status](docs/IMPLEMENTATION_STATUS.md), [test report](docs/testing/TEST_REPORT.md), [architecture](docs/architecture/ARCHITECTURE.md), và [data sources](docs/integrations/DATA_SOURCES.md).
