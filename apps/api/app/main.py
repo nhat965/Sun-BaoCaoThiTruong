@@ -8,21 +8,34 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.analyst import AnalystService
 from app.analytics.fundamental import calculate_financial_metrics
 from app.analytics.valuation import calculate_relative_valuation
 from app.auth import Principal, audit_success, require_admin
+from app.automation import (
+    AutomationService,
+    add_watchlist_item,
+    create_alert_rule,
+    create_watchlist,
+    job_schema,
+)
 from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError
 from app.connectors.fireant import FireAntConnector
-from app.database import SecurityRecord, SessionLocal, ValuationResultRecord, init_db
+from app.database import JobRecord, SecurityRecord, SessionLocal, ValuationResultRecord, init_db
 from app.registry import import_securities_csv, seed_registry_if_empty
 from app.reporting import build_pdf
-from app.repositories import FinancialRepository, SecuritiesRepository
+from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
 from app.schemas import (
+    AlertRuleRequest,
     AnalysisResponse,
+    AnalystRequest,
+    AnalystResponse,
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    JobRequest,
+    JobResult,
     PriceSeries,
     SecuritiesImportResult,
     Security,
@@ -30,6 +43,8 @@ from app.schemas import (
     TechnicalSnapshot,
     ValuationRequest,
     ValuationResult,
+    WatchlistItemRequest,
+    WatchlistRequest,
 )
 from app.services import AnalysisService
 
@@ -84,14 +99,10 @@ def sources(config: Settings = Depends(get_settings)) -> list[SourceStatus]:
             freshness="daily/delayed",
             licensing="Development connector; verify commercial redistribution rights.",
         ),
-        SourceStatus(
-            name="VnExpress RSS",
-            capabilities=["news_metadata"],
-            authentication="none",
-            availability="configured",
-            freshness="RSS publication schedule",
-            licensing="Metadata and links only.",
-        ),
+        *[
+            SourceStatus(name=("VnExpress RSS" if url == "https://vnexpress.net/rss/kinh-doanh.rss" else url), capabilities=["news_metadata"], authentication="none", availability="configured", freshness="RSS publication schedule", licensing="Metadata and links only.")
+            for url in config.news_feeds.split(",") if url.strip()
+        ],
         SourceStatus(
             name="FireAnt",
             capabilities=["service_status"],
@@ -254,8 +265,59 @@ async def technicals(symbol: str, svc: AnalysisService = Depends(service)):
 
 @app.get("/api/v1/stocks/{symbol}/news")
 async def news(symbol: str, svc: AnalysisService = Depends(service)):
-    analysis = await translate_connector_error(svc.analyze(symbol))
-    return {"items": analysis.news, "coverage_note": "Khớp từ khóa trên RSS; có thể không đầy đủ."}
+    with SessionLocal() as session:
+        cached = NewsRepository(session).list(symbol)
+    if cached:
+        return {"items": cached, "coverage_note": "Metadata RSS đã chuẩn hóa/lưu trữ; có thể không đầy đủ."}
+    with SessionLocal() as session:
+        security = SecuritiesRepository(session).get(symbol)
+    if security is None:
+        raise HTTPException(404, detail={"code": "symbol_not_found", "message": "Mã chưa được hỗ trợ."})
+    return {"items": await svc.related_news(security), "coverage_note": "Metadata RSS; không tải toàn văn bài viết."}
+
+
+@app.post("/api/v1/analyst/chat", response_model=AnalystResponse)
+async def analyst_chat(payload: AnalystRequest, svc: AnalysisService = Depends(service)):
+    return await AnalystService(settings, svc).answer(payload)
+
+
+@app.post("/api/v1/jobs/eod/{symbol}", response_model=JobResult)
+async def enqueue_eod(symbol: str, payload: JobRequest | None = None, request: Request = None, principal: Principal = Depends(require_admin)):
+    job = AutomationService(AnalysisService(settings), settings.automation_max_retries).enqueue_eod(symbol, payload.scheduled_for if payload else None)
+    if request is not None: audit_success(request, principal, {"job_id": job.id}, action="jobs.enqueue")
+    return job_schema(job)
+
+
+@app.get("/api/v1/jobs", response_model=list[JobResult])
+def list_jobs(principal: Principal = Depends(require_admin)):
+    with SessionLocal() as session:
+        return [job_schema(job) for job in session.query(JobRecord).order_by(JobRecord.id.desc()).limit(100).all()]
+
+
+@app.post("/api/v1/jobs/{job_id}/run", response_model=JobResult)
+async def run_job(job_id: int, principal: Principal = Depends(require_admin)):
+    job = await AutomationService(AnalysisService(settings), settings.automation_max_retries).run(job_id)
+    return job_schema(job)
+
+
+@app.post("/api/v1/watchlists", response_model=dict)
+def watchlist_create(payload: WatchlistRequest, principal: Principal = Depends(require_admin)):
+    row = create_watchlist(payload.name)
+    return {"id": row.id, "name": row.name, "owner": row.owner}
+
+
+@app.post("/api/v1/watchlists/{watchlist_id}/items", response_model=dict)
+def watchlist_add(watchlist_id: int, payload: WatchlistItemRequest, principal: Principal = Depends(require_admin)):
+    try: row = add_watchlist_item(watchlist_id, payload.symbol)
+    except LookupError as exc: raise HTTPException(404, detail=str(exc)) from exc
+    return {"id": row.id, "watchlist_id": row.watchlist_id, "symbol": row.symbol}
+
+
+@app.post("/api/v1/watchlists/{watchlist_id}/rules", response_model=dict)
+def watchlist_rule(watchlist_id: int, payload: AlertRuleRequest, principal: Principal = Depends(require_admin)):
+    try: row = create_alert_rule(watchlist_id, payload.rule_type, payload.threshold)
+    except LookupError as exc: raise HTTPException(404, detail=str(exc)) from exc
+    return {"id": row.id, "watchlist_id": row.watchlist_id, "rule_type": row.rule_type, "threshold": row.threshold, "enabled": row.enabled}
 
 
 @app.get("/api/v1/stocks/{symbol}/analysis", response_model=AnalysisResponse)

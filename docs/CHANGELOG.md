@@ -8,7 +8,10 @@
 - Added financial periods, normalized statement items, metrics, valuation results and corporate-action schema/migration.
 - Added authorized financial CSV ingestion, stored-period ratio calculation and explicit relative P/E/P/B scenarios.
 - Added fundamental metrics panel in the dashboard with source/period metadata and missing-data messaging.
-- Added 4 security/fundamental integration tests; backend suite now has 18 tests.
+- Added configurable metadata-only RSS connectors, normalized news/event persistence and safe FireAnt unsupported-operation boundaries.
+- Added grounded analyst endpoint with optional OpenAI-compatible provider, explicit evidence kinds and deterministic fallback.
+- Added idempotent EOD jobs/retries, job runs, watchlists and alert-rule persistence plus dashboard analyst panel.
+- Added news/automation migrations `0005`/`0006`; backend suite now has 19 tests.
 
 ## 0.2.0 — 2026-10-12
 

@@ -7,13 +7,13 @@ Date: 2026-10-12 (Asia/Bangkok)
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 18 tests |
+| Backend `pytest -q` | PASS — 19 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
 | Clean Alembic upgrade to `0004` | PASS |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
 
-Backend coverage exercises API happy/error paths, admin 401/403/422 protection, audit writes, persistent circuit-breaker recovery, normalization rejection and deduplication, unaccented registry search, stored financial CSV ingestion, deterministic financial/valuation formulas, news relevance/deduplication, technical edge cases including flat MFI and PDF creation. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+Backend coverage exercises API happy/error paths, admin 401/403/422 protection, audit writes, persistent circuit-breaker recovery, normalization rejection and deduplication, unaccented registry search, stored financial CSV ingestion, deterministic financial/valuation formulas, news event/relevance/deduplication, technical edge cases including flat MFI and PDF creation. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
 
 ## Live smoke test
 

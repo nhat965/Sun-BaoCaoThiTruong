@@ -57,3 +57,11 @@ export interface FinancialMetricResult {
   source_name: string | null;
 }
 
+export interface AnalystResponse {
+  status: "available" | "partial" | "unavailable";
+  symbol: string;
+  answer: string;
+  sections: Record<string, string[]>;
+  limitations: string[];
+}
+

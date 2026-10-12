@@ -9,11 +9,14 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.analytics.fundamental import calculate_financial_metrics
+from app.connectors.news import group_hash
 from app.database import (
     AuditLogRecord,
     FinancialMetricRecord,
     FinancialPeriodRecord,
     FinancialStatementItemRecord,
+    NewsArticleRecord,
+    NewsEventRecord,
     PriceObservation,
     SecurityRecord,
     SourceHealthRecord,
@@ -22,6 +25,7 @@ from app.schemas import (
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    NewsItem,
     PriceSeries,
     Security,
 )
@@ -465,3 +469,54 @@ class FinancialRepository:
                 "source_name": current.source_name,
             }
         )
+
+
+class NewsRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def store(self, symbol: str, items: list[NewsItem]) -> list[NewsItem]:
+        security = self.session.scalar(select(SecurityRecord).where(SecurityRecord.symbol == symbol.upper()))
+        if security is None:
+            return []
+        stored: list[NewsItem] = []
+        for item in items:
+            url = str(item.url)
+            existing = self.session.scalar(select(NewsArticleRecord).where(
+                NewsArticleRecord.source_name == item.publisher, NewsArticleRecord.url == url
+            ))
+            digest = group_hash(item.title, item.published_at)
+            values = {"security_id": security.id, "source_name": item.publisher, "source_url": item.source_url or url,
+                "title": item.title, "normalized_title": normalize_vietnamese(item.title), "url": url,
+                "published_at": item.published_at, "retrieved_at": item.retrieved_at or datetime.now(UTC),
+                "relevance_score": Decimal(str(item.relevance_score)), "event_category": item.event_category,
+                "event_summary": item.event_summary, "facts_json": json.dumps(item.facts, ensure_ascii=False),
+                "implications_json": json.dumps(item.implications, ensure_ascii=False),
+                "uncertainty_json": json.dumps(item.uncertainty, ensure_ascii=False), "evidence_json": json.dumps(item.evidence, ensure_ascii=False), "group_hash": digest}
+            if existing is None:
+                self.session.add(NewsArticleRecord(**values))
+            else:
+                for key, value in values.items():
+                    setattr(existing, key, value)
+            event = self.session.scalar(select(NewsEventRecord).where(NewsEventRecord.group_hash == digest))
+            if event is None:
+                self.session.add(NewsEventRecord(security_id=security.id, group_hash=digest, event_category=item.event_category,
+                    first_seen_at=item.retrieved_at or datetime.now(UTC), last_seen_at=item.retrieved_at or datetime.now(UTC),
+                    article_count=1, summary=item.event_summary, evidence_json=json.dumps(item.evidence, ensure_ascii=False)))
+            else:
+                event.last_seen_at = item.retrieved_at or datetime.now(UTC)
+                event.article_count += 1
+            stored.append(item)
+        self.session.commit()
+        return stored
+
+    def list(self, symbol: str, limit: int = 20) -> list[NewsItem]:
+        security = self.session.scalar(select(SecurityRecord).where(SecurityRecord.symbol == symbol.upper()))
+        if security is None:
+            return []
+        rows = self.session.scalars(select(NewsArticleRecord).where(NewsArticleRecord.security_id == security.id).order_by(NewsArticleRecord.published_at.desc()).limit(limit)).all()
+        return [NewsItem(title=r.title, publisher=r.source_name, published_at=r.published_at, url=r.url,
+            related_symbols=[symbol.upper()], relevance_score=float(r.relevance_score), event_category=r.event_category,
+            source_credibility="established_media", source_url=r.source_url, retrieved_at=r.retrieved_at,
+            event_summary=r.event_summary, facts=json.loads(r.facts_json), implications=json.loads(r.implications_json),
+            uncertainty=json.loads(r.uncertainty_json), evidence=json.loads(r.evidence_json)) for r in rows]

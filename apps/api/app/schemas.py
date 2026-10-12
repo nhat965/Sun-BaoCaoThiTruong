@@ -74,6 +74,13 @@ class NewsItem(BaseModel):
     relevance_score: float = Field(default=0, ge=0, le=1)
     event_category: str = "other"
     source_credibility: Literal["official", "established_media", "unknown"] = "unknown"
+    source_url: str | None = None
+    retrieved_at: datetime | None = None
+    event_summary: str | None = None
+    facts: list[str] = Field(default_factory=list)
+    implications: list[str] = Field(default_factory=list)
+    uncertainty: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):
@@ -179,3 +186,61 @@ class ValuationResult(BaseModel):
     assumptions: dict[str, float | str]
     warnings: list[str] = Field(default_factory=list)
     calculated_at: datetime
+
+
+class AnalystRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    question: str = Field(min_length=3, max_length=2000)
+
+
+class EvidenceRecord(BaseModel):
+    kind: Literal["fact", "calculation", "interpretation", "hypothesis", "forecast"]
+    statement: str
+    source: str | None = None
+    retrieved_at: datetime | None = None
+    market_timestamp: datetime | None = None
+    confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+
+
+class AnalystResponse(BaseModel):
+    status: Literal["available", "unavailable", "partial"]
+    symbol: str
+    answer: str
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    evidence: list[EvidenceRecord] = Field(default_factory=list)
+    tool_outputs: dict[str, object] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class JobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    scheduled_for: datetime | None = None
+
+
+class JobResult(BaseModel):
+    id: int
+    job_type: str
+    symbol: str
+    scheduled_for: datetime
+    status: str
+    attempts: int
+    last_error: str | None = None
+
+
+class WatchlistRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+
+
+class WatchlistItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+
+
+class AlertRuleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rule_type: Literal["technical_score", "news_event"]
+    threshold: float | None = None

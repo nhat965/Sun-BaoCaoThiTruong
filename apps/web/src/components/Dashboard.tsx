@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Analysis, FinancialMetricResult } from "@/lib/types";
+import type { Analysis, AnalystResponse, FinancialMetricResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
@@ -16,6 +16,8 @@ export function Dashboard() {
   const [symbol, setSymbol] = useState("HPG");
   const [data, setData] = useState<Analysis | null>(null);
   const [fundamentals, setFundamentals] = useState<FinancialMetricResult | null>(null);
+  const [analyst, setAnalyst] = useState<AnalystResponse | null>(null);
+  const [analystLoading, setAnalystLoading] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -77,6 +79,15 @@ export function Dashboard() {
     URL.revokeObjectURL(url);
   }
 
+  async function askAnalyst() {
+    if (!data) return;
+    setAnalystLoading(true);
+    try {
+      const response = await fetch(`${API}/analyst/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: data.security.symbol, question: "Tóm tắt dữ liệu hiện có, rủi ro và điều kiện cần theo dõi." }) });
+      setAnalyst(response.ok ? await response.json() : { status: "unavailable", symbol: data.security.symbol, answer: "Không thể gọi analyst lúc này.", sections: {}, limitations: [] });
+    } finally { setAnalystLoading(false); }
+  }
+
   const indicators = data ? ["sma20", "sma50", "rsi14", "macd", "atr14", "max_drawdown"] : [];
   return <main>
     <header className="topbar">
@@ -129,6 +140,8 @@ export function Dashboard() {
       </section>
 
       <section className="news-section" id="news"><div className="section-head"><div><p className="eyebrow">Tin liên quan</p><h2>Tiêu đề khớp từ RSS</h2></div><p>Metadata và liên kết gốc; không sao chép nội dung bài viết.</p></div>{data.news.length ? <div className="news-list">{data.news.map((item) => <a key={item.url} href={item.url} target="_blank" rel="noreferrer"><span>{item.publisher} · {formatDate(item.published_at)}</span><strong>{item.title}</strong><b>Đọc nguồn ↗</b></a>)}</div> : <div className="empty">Không tìm thấy tiêu đề RSS phù hợp trong cửa sổ hiện tại.</div>}</section>
+
+      <section className="analyst-section"><div className="section-head"><div><p className="eyebrow">AI analyst có căn cứ</p><h2>Hỏi trên dữ liệu đã truy xuất</h2></div><button onClick={() => void askAnalyst()} disabled={analystLoading}>{analystLoading ? "Đang tổng hợp…" : "Tóm tắt có evidence"}</button></div>{analyst ? <><p>{analyst.answer}</p>{analyst.limitations.map((item) => <small key={item}>{item}</small>)}</> : <div className="empty">Không gửi dữ liệu người dùng hoặc bí mật tới trình duyệt; analyst chỉ dùng tool outputs nội bộ.</div>}</section>
 
       <section className="evidence" id="sources"><div><p className="eyebrow">Dấu vết bằng chứng</p><h2>{data.evidence_count} mục dữ liệu hỗ trợ</h2></div><dl><div><dt>Chế độ</dt><dd>{data.prices.provenance.mode}</dd></div><div><dt>Truy xuất</dt><dd>{formatDate(data.prices.provenance.retrieved_at)}</dd></div><div><dt>Điều chỉnh giá</dt><dd>Chưa xác nhận đầy đủ</dd></div></dl><ul>{data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
     </>}

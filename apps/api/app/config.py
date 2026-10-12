@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     circuit_failure_threshold: int = 3
     circuit_cooldown_seconds: float = 60
     market_cache_ttl_seconds: int = 300
+    news_feeds: str = "https://vnexpress.net/rss/kinh-doanh.rss"
+    llm_provider: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    llm_base_url: str | None = None
+    analyst_timeout_seconds: float = 20
+    automation_max_retries: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
