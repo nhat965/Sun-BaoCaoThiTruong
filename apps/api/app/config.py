@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     llm_rate_limit_per_minute: int = 10
     automation_max_retries: int = 3
     automation_lease_seconds: int = 1800
+    market_timezone: str = "Asia/Ho_Chi_Minh"
     max_request_bytes: int = 5_000_000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

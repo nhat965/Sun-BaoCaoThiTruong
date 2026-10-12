@@ -384,6 +384,7 @@ class AnalystResponse(BaseModel):
     status: Literal["available", "unavailable", "partial"]
     symbol: str
     answer: str
+    research_plan: list[str] = Field(default_factory=list)
     sections: dict[str, list[str]] = Field(default_factory=dict)
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     tool_outputs: dict[str, object] = Field(default_factory=dict)
@@ -405,6 +406,45 @@ class JobResult(BaseModel):
     status: str
     attempts: int
     last_error: str | None = None
+    next_attempt_at: datetime | None = None
+
+
+class MarketIndexObservation(BaseModel):
+    symbol: str
+    name: str
+    close: float
+    change_percent: float | None = None
+    market_timestamp: datetime
+    source: str
+
+
+class MarketOverview(BaseModel):
+    status: Literal["available", "partial", "unavailable"]
+    as_of: datetime | None = None
+    source_mode: Literal["live", "fixture", "mixed", "unknown"] = "unknown"
+    sources: list[str] = Field(default_factory=list)
+    active_stock_count: int = 0
+    stocks_with_two_sessions: int = 0
+    coverage_percent: float = Field(default=0, ge=0, le=100)
+    advancers: int | None = None
+    decliners: int | None = None
+    unchanged: int | None = None
+    total_volume: int | None = None
+    estimated_trading_value: float | None = None
+    indices: list[MarketIndexObservation] = Field(default_factory=list)
+    sector_performance_percent: dict[str, float] = Field(default_factory=dict)
+    foreign_net_value: float | None = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class DailyMarketReport(BaseModel):
+    snapshot_key: str
+    report_type: Literal["pre_market", "post_market", "stock_eod"]
+    symbol: str | None = None
+    trading_date: datetime
+    source_mode: str
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    created_at: datetime
 
 
 class WatchlistRequest(BaseModel):
@@ -421,3 +461,111 @@ class AlertRuleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rule_type: Literal["technical_score", "news_event"]
     threshold: float | None = None
+
+
+class PortfolioCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+    base_currency: str = Field(default="VND", min_length=3, max_length=8)
+
+
+class PortfolioTransactionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    transaction_type: Literal["buy", "sell", "dividend"]
+    quantity: float = Field(default=0, ge=0)
+    price: float = Field(default=0, ge=0)
+    fees: float = Field(default=0, ge=0)
+    cash_amount: float = Field(default=0, ge=0)
+    executed_at: datetime
+    external_id: str = Field(min_length=1, max_length=128)
+    source_name: str = Field(default="manual", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_transaction_values(self):
+        if self.transaction_type in {"buy", "sell"} and (
+            self.quantity <= 0 or self.price <= 0
+        ):
+            raise ValueError("buy/sell require positive quantity and price")
+        if self.transaction_type == "dividend" and self.cash_amount <= 0:
+            raise ValueError("dividend requires positive cash_amount")
+        if self.executed_at.tzinfo is None:
+            raise ValueError("executed_at must include a timezone")
+        return self
+
+
+class PortfolioImportResult(BaseModel):
+    inserted: int
+    skipped: int
+    rejected: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class PortfolioPosition(BaseModel):
+    symbol: str
+    sector: str | None = None
+    quantity: float
+    average_cost: float
+    cost_basis: float
+    latest_price: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    realized_pnl: float
+    weight_percent: float | None = None
+
+
+class PortfolioSummary(BaseModel):
+    id: int
+    name: str
+    base_currency: str
+    positions: list[PortfolioPosition] = Field(default_factory=list)
+    total_cost_basis: float
+    total_market_value: float | None = None
+    realized_pnl: float
+    unrealized_pnl: float | None = None
+    sector_allocation_percent: dict[str, float] = Field(default_factory=dict)
+    concentration_percent: float | None = None
+    herfindahl_index: float | None = None
+    limitations: list[str] = Field(default_factory=list)
+    calculated_at: datetime
+
+
+class SocialContentItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    content: str = Field(min_length=1, max_length=5000)
+    source_name: str = Field(default="user-supplied", min_length=1, max_length=128)
+    published_at: datetime | None = None
+
+
+class SocialClassification(BaseModel):
+    symbol: str
+    sentiment: Literal["positive", "negative", "neutral", "mixed", "uncertain"]
+    content_type: Literal[
+        "technical_opinion",
+        "fundamental_opinion",
+        "rumor",
+        "forecast",
+        "promotional",
+        "question",
+        "other",
+    ]
+    confidence: Literal["low", "medium"]
+    matched_terms: list[str] = Field(default_factory=list)
+    source_name: str
+    published_at: datetime | None = None
+    uncertainty: list[str] = Field(default_factory=list)
+
+
+class SocialBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[SocialContentItem] = Field(min_length=1, max_length=500)
+
+
+class SocialBatchResult(BaseModel):
+    sample_size: int
+    sentiment_distribution: dict[str, int]
+    type_distribution: dict[str, int]
+    items: list[SocialClassification]
+    coverage_note: str
+    generated_at: datetime

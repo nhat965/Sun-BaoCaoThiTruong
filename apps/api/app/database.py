@@ -70,6 +70,7 @@ class PriceObservation(Base):
     validation_status: Mapped[str] = mapped_column(String(24), default="valid")
     adjustment_policy: Mapped[str] = mapped_column(String(64), default="unadjusted")
     quality_flags_json: Mapped[str] = mapped_column(Text, default="[]")
+    source_mode: Mapped[str] = mapped_column(String(16), default="unknown")
 
     security: Mapped[SecurityRecord] = relationship(back_populates="prices")
 
@@ -270,6 +271,7 @@ class JobRecord(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     worker_id: Mapped[str | None] = mapped_column(String(128))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class JobRunRecord(Base):
@@ -287,6 +289,19 @@ class JobRunRecord(Base):
     worker_id: Mapped[str | None] = mapped_column(String(128))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReportSnapshotRecord(Base):
+    __tablename__ = "report_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    report_type: Mapped[str] = mapped_column(String(32), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), index=True)
+    trading_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    source_mode: Mapped[str] = mapped_column(String(16), default="unknown")
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class WatchlistRecord(Base):
@@ -330,6 +345,35 @@ class AlertRecord(Base):
     dedupe_key: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(24), default="OPEN")
     message: Mapped[str] = mapped_column(String(1024))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PortfolioRecord(Base):
+    __tablename__ = "portfolios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    base_currency: Mapped[str] = mapped_column(String(8), default="VND")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PortfolioTransactionRecord(Base):
+    __tablename__ = "portfolio_transactions"
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "external_id", name="uq_portfolio_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    transaction_type: Mapped[str] = mapped_column(String(16), index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 6), default=0)
+    price: Mapped[Decimal] = mapped_column(Numeric(28, 6), default=0)
+    fees: Mapped[Decimal] = mapped_column(Numeric(28, 6), default=0)
+    cash_amount: Mapped[Decimal] = mapped_column(Numeric(28, 6), default=0)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    external_id: Mapped[str] = mapped_column(String(128))
+    source_name: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

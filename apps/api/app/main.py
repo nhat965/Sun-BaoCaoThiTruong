@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from io import BytesIO
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
@@ -37,7 +37,18 @@ from app.database import (
     ValuationResultRecord,
     init_db,
 )
+from app.market_reporting import (
+    build_market_overview,
+    create_daily_market_report,
+    list_report_snapshots,
+)
 from app.middleware import RequestBodyLimitMiddleware
+from app.portfolio import (
+    add_transaction,
+    create_portfolio,
+    import_transactions_csv,
+    portfolio_summary,
+)
 from app.registry import import_securities_csv, import_securities_xlsx, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
@@ -48,6 +59,7 @@ from app.schemas import (
     AnalystResponse,
     CorporateAction,
     CorporateActionImportResult,
+    DailyMarketReport,
     DataQualityReport,
     DCFRequest,
     DCFSensitivityRequest,
@@ -58,9 +70,16 @@ from app.schemas import (
     FinancialTrendResponse,
     JobRequest,
     JobResult,
+    MarketOverview,
+    PortfolioCreate,
+    PortfolioImportResult,
+    PortfolioSummary,
+    PortfolioTransactionInput,
     PriceSeries,
     SecuritiesImportResult,
     Security,
+    SocialBatchRequest,
+    SocialBatchResult,
     SourceDiagnostic,
     SourceStatus,
     TechnicalSnapshot,
@@ -70,6 +89,7 @@ from app.schemas import (
     WatchlistRequest,
 )
 from app.services import AnalysisService
+from app.social import analyze_social_batch
 
 
 @asynccontextmanager
@@ -289,6 +309,106 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         sources=diagnostics,
         issues=issues,
     )
+
+
+@app.get("/api/v1/market/overview", response_model=MarketOverview)
+def market_overview() -> MarketOverview:
+    return build_market_overview()
+
+
+@app.post("/api/v1/market/reports/{report_type}", response_model=DailyMarketReport)
+def market_report_create(
+    report_type: str,
+    trading_date: date | None = None,
+    principal: Principal = Depends(require_admin),
+) -> DailyMarketReport:
+    try:
+        return create_daily_market_report(report_type, trading_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/market/reports", response_model=list[DailyMarketReport])
+def market_reports(limit: int = Query(50, ge=1, le=200)) -> list[DailyMarketReport]:
+    return list_report_snapshots(limit)
+
+
+@app.post("/api/v1/portfolios", response_model=dict)
+def portfolio_create(
+    payload: PortfolioCreate,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+):
+    try:
+        row = create_portfolio(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_success(request, principal, row, action="portfolios.create")
+    return {"id": row.id, "name": row.name, "base_currency": row.base_currency}
+
+
+@app.post("/api/v1/portfolios/{portfolio_id}/transactions", response_model=dict)
+def portfolio_transaction_create(
+    portfolio_id: int,
+    payload: PortfolioTransactionInput,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+):
+    try:
+        row, inserted = add_transaction(portfolio_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit_success(request, principal, row, action="portfolios.transactions.create")
+    return {"id": row.id, "external_id": row.external_id, "inserted": inserted}
+
+
+@app.post(
+    "/api/v1/portfolios/{portfolio_id}/transactions/import",
+    response_model=PortfolioImportResult,
+)
+def portfolio_transactions_import(
+    portfolio_id: int,
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="user-authorized-portfolio", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+):
+    if len(csv_content.encode("utf-8")) > 2_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    result = import_transactions_csv(portfolio_id, csv_content, source_name[:128])
+    if (
+        result.rejected
+        and not result.inserted
+        and not result.skipped
+        and any("Portfolio không tồn tại" in error for error in result.errors)
+    ):
+        raise HTTPException(status_code=404, detail="Portfolio không tồn tại")
+    audit_success(request, principal, result, action="portfolios.transactions.import")
+    return result
+
+
+@app.get("/api/v1/portfolios/{portfolio_id}", response_model=PortfolioSummary)
+def portfolio_get(
+    portfolio_id: int, principal: Principal = Depends(require_admin)
+) -> PortfolioSummary:
+    try:
+        return portfolio_summary(portfolio_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/social/analyze", response_model=SocialBatchResult)
+def social_analyze(
+    payload: SocialBatchRequest,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+) -> SocialBatchResult:
+    """Analyze only user-authorized text; no social platform is scraped."""
+    result = analyze_social_batch(payload)
+    audit_success(request, principal, result, action="social.analyze")
+    return result
 
 
 @app.get("/api/v1/stocks/search", response_model=list[Security])
@@ -581,11 +701,15 @@ async def analyst_chat(
 
 @app.post("/api/v1/jobs/eod/{symbol}", response_model=JobResult)
 async def enqueue_eod(symbol: str, payload: JobRequest | None = None, request: Request = None, principal: Principal = Depends(require_admin)):
-    job = AutomationService(
-        AnalysisService(settings),
-        settings.automation_max_retries,
-        settings.automation_lease_seconds,
-    ).enqueue_eod(symbol, payload.scheduled_for if payload else None)
+    try:
+        job = AutomationService(
+            AnalysisService(settings),
+            settings.automation_max_retries,
+            settings.automation_lease_seconds,
+            settings.market_timezone,
+        ).enqueue_eod(symbol, payload.scheduled_for if payload else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if request is not None: audit_success(request, principal, {"job_id": job.id}, action="jobs.enqueue")
     return job_schema(job)
 
@@ -602,6 +726,7 @@ async def run_job(job_id: int, principal: Principal = Depends(require_admin)):
         AnalysisService(settings),
         settings.automation_max_retries,
         settings.automation_lease_seconds,
+        settings.market_timezone,
     ).run(job_id)
     return job_schema(job)
 

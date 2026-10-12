@@ -167,6 +167,7 @@ class PriceRepository:
                 "validation_status": series.provenance.validation_status,
                 "adjustment_policy": series.provenance.adjustment_policy,
                 "quality_flags_json": json.dumps(quality_flags),
+                "source_mode": series.provenance.mode,
             }
             exists = self.session.scalar(
                 select(PriceObservation.id).where(
@@ -192,6 +193,7 @@ class PriceRepository:
                             "validation_status": series.provenance.validation_status,
                             "adjustment_policy": series.provenance.adjustment_policy,
                             "quality_flags_json": json.dumps(quality_flags),
+                            "source_mode": series.provenance.mode,
                         },
                     )
                 )

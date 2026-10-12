@@ -10,6 +10,7 @@ from app.claim_verification import ClaimVerificationService
 from app.config import Settings
 from app.database import SessionLocal
 from app.repositories import FinancialRepository, NewsRepository
+from app.research_tools import ResearchContext, ResearchToolRegistry
 from app.schemas import (
     AnalystRequest,
     AnalystResponse,
@@ -49,12 +50,15 @@ class AnalystService:
             except (LookupError, ValueError):
                 fundamentals = None
             news = NewsRepository(session).list(symbol, 8)
+        registry = ResearchToolRegistry()
+        research_plan = registry.plan(request.question)
+        executions = registry.execute(
+            research_plan,
+            ResearchContext(analysis=analysis, fundamentals=fundamentals, news=news),
+        )
         tools = {
-            "get_stock_prices": {"latest_price": analysis.latest_price, "change_percent": analysis.change_percent},
-            "get_technical_analysis": analysis.technicals.model_dump(mode="json"),
-            "get_financial_metrics": fundamentals.model_dump(mode="json") if fundamentals else None,
-            "search_related_news": [item.model_dump(mode="json") for item in news],
-            "get_market_context": {"currency": analysis.security.currency, "exchange": analysis.security.exchange},
+            name: execution.model_dump(mode="json")
+            for name, execution in executions.items()
         }
         price_period = (
             analysis.prices.provenance.market_timestamp or analysis.generated_at
@@ -195,7 +199,7 @@ class AnalystService:
                 "Claim LLM bị loại do kiểm chứng thất bại: "
                 + " ".join(item.message for item in verification.rejected)
             )
-        return AnalystResponse(status=status, symbol=symbol, answer=answer, sections=sections, evidence=evidence, tool_outputs=tools, limitations=limitations, generated_at=datetime.now(UTC))
+        return AnalystResponse(status=status, symbol=symbol, answer=answer, research_plan=[item.value for item in research_plan], sections=sections, evidence=evidence, tool_outputs=tools, limitations=limitations, generated_at=datetime.now(UTC))
 
 
 def _metric_unit(metric: str) -> str:

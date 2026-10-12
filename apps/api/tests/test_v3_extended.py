@@ -14,8 +14,8 @@ from app.automation import AutomationService
 from app.claim_verification import ClaimVerificationService
 from app.config import Settings
 from app.connectors.news import classify_event, group_hash, relevance
-from app.database import JobRecord, JobRunRecord, SessionLocal, init_db
-from app.schemas import EvidenceRecord, FinancialClaim, Security
+from app.database import JobRecord, JobRunRecord, ReportSnapshotRecord, SessionLocal, init_db
+from app.schemas import DailyMarketReport, EvidenceRecord, FinancialClaim, Security
 
 
 def test_news_pipeline_classifies_and_deduplicates_group():
@@ -91,7 +91,18 @@ def test_expired_worker_cannot_overwrite_new_owner_result():
     assert second is not None
 
     service.complete_success(
-        first, {"owner": "worker-a"}, now=scheduled + timedelta(seconds=12)
+        first,
+        {"owner": "worker-a"},
+        snapshot=DailyMarketReport(
+            snapshot_key=f"stock-eod:{job_id}",
+            report_type="stock_eod",
+            symbol="LEASETEST",
+            trading_date=scheduled,
+            source_mode="fixture",
+            sections={"owner": ["worker-a"]},
+            created_at=scheduled,
+        ),
+        now=scheduled + timedelta(seconds=12),
     )
     with SessionLocal() as session:
         job = session.get(JobRecord, job_id)
@@ -99,7 +110,18 @@ def test_expired_worker_cannot_overwrite_new_owner_result():
         assert job.worker_id == "worker-b"
 
     service.complete_success(
-        second, {"owner": "worker-b"}, now=scheduled + timedelta(seconds=12)
+        second,
+        {"owner": "worker-b"},
+        snapshot=DailyMarketReport(
+            snapshot_key=f"stock-eod:{job_id}",
+            report_type="stock_eod",
+            symbol="LEASETEST",
+            trading_date=scheduled,
+            source_mode="fixture",
+            sections={"owner": ["worker-b"]},
+            created_at=scheduled,
+        ),
+        now=scheduled + timedelta(seconds=12),
     )
     with SessionLocal() as session:
         job = session.get(JobRecord, job_id)
@@ -111,6 +133,48 @@ def test_expired_worker_cannot_overwrite_new_owner_result():
         assert job.status == "SUCCESS"
         assert [run.status for run in runs] == ["EXPIRED", "SUCCESS"]
         assert json.loads(runs[1].result_json) == {"owner": "worker-b"}
+        snapshots = session.scalars(
+            select(ReportSnapshotRecord).where(
+                ReportSnapshotRecord.snapshot_key == f"stock-eod:{job_id}"
+            )
+        ).all()
+        assert len(snapshots) == 1
+        assert json.loads(snapshots[0].payload_json)["sections"]["owner"] == ["worker-b"]
+
+
+def test_failed_job_uses_bounded_retry_backoff():
+    init_db()
+    scheduled = datetime.now(UTC).replace(second=0, microsecond=0)
+    with SessionLocal() as session:
+        job = JobRecord(
+            job_type="eod",
+            symbol="BACKOFF",
+            scheduled_for=scheduled,
+            status="QUEUED",
+            attempts=0,
+            created_at=scheduled,
+            updated_at=scheduled,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+
+    class FailingAnalysis:
+        async def analyze(self, symbol):
+            raise RuntimeError("controlled source failure")
+
+    service = AutomationService(FailingAnalysis(), max_retries=3)
+    first = asyncio.run(service.run(job_id))
+    second = asyncio.run(service.run(job_id))
+    assert first.status == second.status == "RETRY_PENDING"
+    assert second.attempts == 1
+    assert second.next_attempt_at is not None
+    with SessionLocal() as session:
+        runs = session.scalars(
+            select(JobRunRecord).where(JobRunRecord.job_id == job_id)
+        ).all()
+        assert len(runs) == 1
 
 
 def test_production_settings_fail_closed_without_strong_admin_secret():

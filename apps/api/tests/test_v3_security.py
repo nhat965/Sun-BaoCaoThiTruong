@@ -101,6 +101,131 @@ def test_authorized_corporate_actions_preserve_source_and_do_not_adjust_prices()
         assert all(item["source_name"] == "authorized-actions-export" for item in actions.json())
 
 
+def test_market_overview_and_daily_report_snapshots_are_idempotent():
+    admin = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        analysis = client.get("/api/v1/stocks/HPG/analysis")
+        assert analysis.status_code == 200
+        overview = client.get("/api/v1/market/overview")
+        assert overview.status_code == 200
+        payload = overview.json()
+        assert payload["stocks_with_two_sessions"] >= 1
+        assert payload["source_mode"] == "fixture"
+        first = client.post(
+            "/api/v1/market/reports/post_market?trading_date=2026-10-12",
+            headers=admin,
+        )
+        second = client.post(
+            "/api/v1/market/reports/post_market?trading_date=2026-10-12",
+            headers=admin,
+        )
+        assert first.status_code == second.status_code == 200
+        assert first.json()["snapshot_key"] == second.json()["snapshot_key"]
+        reports = client.get("/api/v1/market/reports")
+        matching = [
+            item
+            for item in reports.json()
+            if item["snapshot_key"] == "market-post_market:2026-10-12"
+        ]
+        assert len(matching) == 1
+        weekend = client.post(
+            "/api/v1/market/reports/post_market?trading_date=2026-10-11",
+            headers=admin,
+        )
+        assert weekend.status_code == 422
+
+
+def test_successful_eod_job_persists_one_stock_report_snapshot():
+    admin = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        queued = client.post("/api/v1/jobs/eod/HPG", headers=admin)
+        assert queued.status_code == 200
+        job_id = queued.json()["id"]
+        completed = client.post(f"/api/v1/jobs/{job_id}/run", headers=admin)
+        assert completed.status_code == 200
+        assert completed.json()["status"] == "SUCCESS"
+        reports = client.get("/api/v1/market/reports").json()
+        assert sum(item["snapshot_key"] == f"stock-eod:{job_id}" for item in reports) == 1
+
+
+def test_manual_portfolio_cost_basis_pnl_and_idempotent_csv_import():
+    admin = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        client.get("/api/v1/stocks/HPG/analysis")
+        created = client.post(
+            "/api/v1/portfolios",
+            headers=admin,
+            json={"name": "V4 portfolio test", "base_currency": "VND"},
+        )
+        assert created.status_code == 200
+        portfolio_id = created.json()["id"]
+        transactions = [
+            {
+                "symbol": "HPG",
+                "transaction_type": "buy",
+                "quantity": 10,
+                "price": 100,
+                "fees": 10,
+                "executed_at": "2026-01-02T09:00:00+07:00",
+                "external_id": "buy-1",
+            },
+            {
+                "symbol": "HPG",
+                "transaction_type": "sell",
+                "quantity": 4,
+                "price": 150,
+                "fees": 5,
+                "executed_at": "2026-02-02T09:00:00+07:00",
+                "external_id": "sell-1",
+            },
+            {
+                "symbol": "HPG",
+                "transaction_type": "dividend",
+                "cash_amount": 100,
+                "executed_at": "2026-03-02T09:00:00+07:00",
+                "external_id": "dividend-1",
+            },
+        ]
+        for transaction in transactions:
+            response = client.post(
+                f"/api/v1/portfolios/{portfolio_id}/transactions",
+                headers=admin,
+                json=transaction,
+            )
+            assert response.status_code == 200
+        csv_content = """symbol,transaction_type,quantity,price,fees,cash_amount,executed_at,external_id
+HPG,buy,1,120,0,0,2026-04-02T09:00:00+07:00,csv-buy-1
+HPG,buy,1,120,0,0,2026-04-02T09:00:00+07:00,csv-buy-1
+"""
+        imported = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/transactions/import",
+            headers=admin,
+            content=csv_content,
+        )
+        assert imported.status_code == 200
+        assert imported.json()["inserted"] == 1
+        assert imported.json()["skipped"] == 1
+        summary = client.get(f"/api/v1/portfolios/{portfolio_id}", headers=admin)
+        assert summary.status_code == 200
+        position = summary.json()["positions"][0]
+        assert position["quantity"] == 7
+        assert position["realized_pnl"] == 291
+        assert summary.json()["concentration_percent"] == 100
+        oversell = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/transactions",
+            headers=admin,
+            json={
+                "symbol": "HPG",
+                "transaction_type": "sell",
+                "quantity": 100,
+                "price": 100,
+                "executed_at": "2026-05-02T09:00:00+07:00",
+                "external_id": "oversell",
+            },
+        )
+        assert oversell.status_code == 422
+
+
 class ControlledConnector(MarketDataConnector):
     name = "controlled-provider"
 
