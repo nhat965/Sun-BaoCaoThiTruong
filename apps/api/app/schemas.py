@@ -113,6 +113,24 @@ class SourceStatus(BaseModel):
     message: str | None = None
 
 
+class SourceDiagnostic(SourceStatus):
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    consecutive_failures: int = 0
+
+
+class DataQualityReport(BaseModel):
+    generated_at: datetime
+    market_data_mode: Literal["live", "fixture"]
+    securities_count: int
+    active_securities_count: int
+    price_observations_count: int
+    last_market_timestamp: datetime | None = None
+    last_retrieval_timestamp: datetime | None = None
+    sources: list[SourceDiagnostic]
+    issues: list[str] = Field(default_factory=list)
+
+
 class SecuritiesImportResult(BaseModel):
     inserted: int
     updated: int

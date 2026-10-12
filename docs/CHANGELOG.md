@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — V4 M2 data-quality vertical slice
+
+- Added `/api/v1/data-quality` with securities/price coverage, freshness and explicit source limitations.
+- Added persisted latest-success/latest-failure connector timestamps in migration `0007`.
+- Added a responsive Vietnamese data-quality dashboard with honest fixture/configured/unavailable states.
+- Added regression coverage and verified backend lint/tests, clean migrations, frontend lint/build and desktop/mobile browser behavior.
+
 ## 0.4.0 — V4 M1 security and reliability hardening
 
 - Split public valuation calculation from admin-only valuation persistence.

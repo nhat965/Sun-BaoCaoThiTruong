@@ -27,6 +27,19 @@ def test_health_and_hpg_flow():
         }
         assert payload["fundamental_status"] == "unavailable"
 
+        quality = client.get("/api/v1/data-quality")
+        assert quality.status_code == 200
+        quality_payload = quality.json()
+        assert quality_payload["market_data_mode"] == "fixture"
+        assert quality_payload["price_observations_count"] >= 30
+        fixture = next(
+            source
+            for source in quality_payload["sources"]
+            if source["availability"] == "fixture"
+        )
+        assert fixture["last_success_at"] is not None
+        assert quality_payload["issues"]
+
 
 def test_pdf_report_and_validation():
     with TestClient(app) as client:

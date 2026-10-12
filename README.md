@@ -51,6 +51,7 @@ Sao chép `.env.example` thành `.env`. Mặc định local dùng SQLite; Compos
 ```bash
 curl http://localhost:8000/api/v1/stocks/HPG/analysis
 curl -X POST http://localhost:8000/api/v1/stocks/HPG/reports --output HPG-report.pdf
+curl http://localhost:8000/api/v1/data-quality
 ```
 
 Tìm kiếm không dấu và nhập danh mục chứng khoán từ nguồn được phép:
@@ -92,6 +93,7 @@ cd apps/web && npm run lint && npm run build
 
 - Yahoo Finance không phải nguồn dữ liệu được cấp phép riêng cho sản phẩm này; cần thay bằng feed có hợp đồng trước khi phân phối thương mại.
 - Registry kèm theo chỉ là bootstrap 13 mã, được ghi nguồn rõ ràng; độ phủ đầy đủ cần file CSV được phép hoặc connector master-data có hợp đồng.
+- Trang chất lượng dữ liệu hiển thị độ phủ registry, số quan sát giá, mốc thị trường, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
 - Pipeline BCTC và công thức nền tảng đã có cho CSV được cấp phép; chưa có credential provider tài chính live, peer set, dải lịch sử hoặc DCF.
 - Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, sentiment mạng xã hội hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.

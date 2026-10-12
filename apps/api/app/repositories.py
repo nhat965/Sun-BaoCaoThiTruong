@@ -200,6 +200,7 @@ class SourceHealthRepository:
         message: str | None = None,
         latency_ms: int | None = None,
     ) -> None:
+        checked_at = datetime.now(UTC)
         current = self.session.scalar(
             select(SourceHealthRecord).where(SourceHealthRecord.source_name == source_name)
         )
@@ -207,20 +208,26 @@ class SourceHealthRepository:
             current = SourceHealthRecord(
                 source_name=source_name,
                 status=status,
-                checked_at=datetime.now(UTC),
+                checked_at=checked_at,
                 latency_ms=latency_ms,
                 message=message,
                 consecutive_failures=0 if status == "available" else 1,
+                last_success_at=checked_at if status == "available" else None,
+                last_failure_at=checked_at if status != "available" else None,
             )
             self.session.add(current)
         else:
             current.status = status
-            current.checked_at = datetime.now(UTC)
+            current.checked_at = checked_at
             current.latency_ms = latency_ms
             current.message = message
             current.consecutive_failures = (
                 0 if status == "available" else current.consecutive_failures + 1
             )
+            if status == "available":
+                current.last_success_at = checked_at
+            else:
+                current.last_failure_at = checked_at
 
 
 FINANCIAL_STATEMENT_TYPES = {"income", "balance", "cash_flow"}

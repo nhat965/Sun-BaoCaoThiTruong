@@ -29,7 +29,7 @@
 | Milestone | Status | Evidence / remaining gap |
 |---|---|---|
 | M1 Security and reliability | COMPLETE | Protected valuation persistence, atomic job claiming/retry recovery, request/LLM limits, production config validation; 21 backend tests pass. Shared rate-limit backend remains for multi-worker deployment. |
-| M2 Reliable Vietnamese financial data | PARTIAL | Authorized securities CSV and Yahoo development connector are traceable; full-market synchronization and licensed providers are not configured. |
+| M2 Reliable Vietnamese financial data | PARTIAL | Authorized securities CSV and Yahoo development connector are traceable. `/api/v1/data-quality` and the dashboard expose registry/price coverage, freshness, source success/failure history and honest fixture/configured/unavailable states. Full-market synchronization and licensed providers are not configured. |
 | M3 Fundamental research and valuation | PARTIAL | Deterministic stored-period metrics and relative valuation exist; trends, peers, historical bands and DCF remain. |
 | M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline and event storage exist; more than one genuinely live authorized feed is not configured. |
 | M5 AI analyst and verification | PARTIAL | Typed evidence response, optional provider, limits and audit exist; numeric claim/citation validation remains. |

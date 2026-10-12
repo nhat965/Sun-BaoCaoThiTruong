@@ -15,6 +15,6 @@ Remaining production gap: process-local rate limits need Redis or another shared
 
 ## Next milestones
 
-- M2: provider capability/quality dashboard and authorized securities synchronization.
+- M2: **PARTIAL** — provider capability/quality API and dashboard are implemented with persisted success/failure timestamps, coverage counts, freshness and explicit fixture/configured/unavailable states. Clean migration `0007` and browser QA passed. Authorized full-market securities synchronization and a licensed market feed remain.
 - M3: financial trend dashboard, statement scope metadata and transparent valuation history/peer inputs.
 - M4–M8: only where authorized data or infrastructure is available; otherwise retain explicit BLOCKED/PARTIAL status.

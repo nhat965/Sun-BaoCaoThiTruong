@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Analysis, AnalystResponse, FinancialMetricResult } from "@/lib/types";
+import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
@@ -17,6 +17,7 @@ export function Dashboard() {
   const [data, setData] = useState<Analysis | null>(null);
   const [fundamentals, setFundamentals] = useState<FinancialMetricResult | null>(null);
   const [analyst, setAnalyst] = useState<AnalystResponse | null>(null);
+  const [quality, setQuality] = useState<DataQualityReport | null>(null);
   const [analystLoading, setAnalystLoading] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -34,6 +35,11 @@ export function Dashboard() {
     return response.json();
   }
 
+  async function fetchQuality() {
+    const response = await fetch(`${API}/data-quality`, { cache: "no-store" });
+    setQuality(response.ok ? await response.json() : null);
+  }
+
   async function load(nextSymbol: string) {
     setLoading(true);
     setError("");
@@ -42,6 +48,7 @@ export function Dashboard() {
       setData(analysis);
       const fundamentalResponse = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
       setFundamentals(fundamentalResponse.ok ? await fundamentalResponse.json() : null);
+      await fetchQuality();
     } catch (reason) {
       setData(null);
       setFundamentals(null);
@@ -57,6 +64,7 @@ export function Dashboard() {
         setData(analysis);
         const response = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
         setFundamentals(response.ok ? await response.json() : null);
+        await fetchQuality();
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu."))
       .finally(() => setLoading(false));
@@ -143,9 +151,18 @@ export function Dashboard() {
 
       <section className="analyst-section"><div className="section-head"><div><p className="eyebrow">AI analyst có căn cứ</p><h2>Hỏi trên dữ liệu đã truy xuất</h2></div><button onClick={() => void askAnalyst()} disabled={analystLoading}>{analystLoading ? "Đang tổng hợp…" : "Tóm tắt có evidence"}</button></div>{analyst ? <><p>{analyst.answer}</p>{analyst.limitations.map((item) => <small key={item}>{item}</small>)}</> : <div className="empty">Không gửi dữ liệu người dùng hoặc bí mật tới trình duyệt; analyst chỉ dùng tool outputs nội bộ.</div>}</section>
 
-      <section className="evidence" id="sources"><div><p className="eyebrow">Dấu vết bằng chứng</p><h2>{data.evidence_count} mục dữ liệu hỗ trợ</h2></div><dl><div><dt>Chế độ</dt><dd>{data.prices.provenance.mode}</dd></div><div><dt>Truy xuất</dt><dd>{formatDate(data.prices.provenance.retrieved_at)}</dd></div><div><dt>Điều chỉnh giá</dt><dd>Chưa xác nhận đầy đủ</dd></div></dl><ul>{data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
+      <section className="quality-section" id="sources">
+        <div className="section-head"><div><h2>Chất lượng và độ phủ dữ liệu</h2></div><p>{quality ? `Ảnh chụp hệ thống lúc ${formatDate(quality.generated_at)}.` : "Không thể tải chẩn đoán nguồn trong lần truy cập này."}</p></div>
+        {quality && <>
+          <dl className="coverage-strip"><div><dt>Mã đang hoạt động</dt><dd>{quality.active_securities_count} / {quality.securities_count}</dd></div><div><dt>Quan sát giá đã lưu</dt><dd>{money.format(quality.price_observations_count)}</dd></div><div><dt>Mốc thị trường gần nhất</dt><dd>{formatDate(quality.last_market_timestamp)}</dd></div></dl>
+          <div className="source-table" role="table" aria-label="Trạng thái nguồn dữ liệu">{quality.sources.map((source) => <article role="row" key={source.name}><div><strong>{source.name}</strong><span className={`source-state ${source.availability}`}>{source.availability === "available" ? "Sẵn sàng" : source.availability === "configured" ? "Đã cấu hình" : source.availability === "fixture" ? "Fixture" : "Chưa khả dụng"}</span></div><p>{source.capabilities.join(" · ")}</p><dl><div><dt>Thành công gần nhất</dt><dd>{formatDate(source.last_success_at)}</dd></div><div><dt>Thất bại gần nhất</dt><dd>{formatDate(source.last_failure_at)}</dd></div><div><dt>Độ mới</dt><dd>{source.freshness}</dd></div></dl>{source.message && <small>{source.message}</small>}</article>)}</div>
+          {quality.issues.length > 0 && <div className="quality-issues"><strong>Các giới hạn cần xử lý</strong><ul>{quality.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+        </>}
+      </section>
+
+      <section className="evidence"><div><p className="eyebrow">Dấu vết bằng chứng</p><h2>{data.evidence_count} mục dữ liệu hỗ trợ</h2></div><dl><div><dt>Chế độ</dt><dd>{data.prices.provenance.mode}</dd></div><div><dt>Truy xuất</dt><dd>{formatDate(data.prices.provenance.retrieved_at)}</dd></div><div><dt>Điều chỉnh giá</dt><dd>Chưa xác nhận đầy đủ</dd></div></dl><ul>{data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
     </>}
-    <footer><span>Mạch Thị Trường · V2</span><span>Nghiên cứu hỗ trợ quyết định, không phải tư vấn đầu tư.</span></footer>
+    <footer><span>Mạch Thị Trường · V4</span><span>Nghiên cứu hỗ trợ quyết định, không phải tư vấn đầu tư.</span></footer>
   </main>;
 }
 

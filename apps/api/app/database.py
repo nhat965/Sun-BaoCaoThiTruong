@@ -106,6 +106,8 @@ class SourceHealthRecord(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     message: Mapped[str | None] = mapped_column(String(512))
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditLogRecord(Base):

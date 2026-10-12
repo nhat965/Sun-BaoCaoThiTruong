@@ -65,3 +65,26 @@ export interface AnalystResponse {
   limitations: string[];
 }
 
+export interface DataQualityReport {
+  generated_at: string;
+  market_data_mode: "live" | "fixture";
+  securities_count: number;
+  active_securities_count: number;
+  price_observations_count: number;
+  last_market_timestamp: string | null;
+  last_retrieval_timestamp: string | null;
+  sources: {
+    name: string;
+    capabilities: string[];
+    availability: "available" | "configured" | "unavailable" | "fixture";
+    freshness: string;
+    licensing: string;
+    last_checked_at: string | null;
+    last_success_at: string | null;
+    last_failure_at: string | null;
+    consecutive_failures: number;
+    message: string | null;
+  }[];
+  issues: string[];
+}
+
