@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,9 +26,20 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_base_url: str | None = None
     analyst_timeout_seconds: float = 20
+    llm_rate_limit_per_minute: int = 10
     automation_max_retries: int = 3
+    max_request_bytes: int = 5_000_000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        if self.app_environment.lower() in {"production", "prod"}:
+            if not self.admin_api_token or len(self.admin_api_token) < 24:
+                raise ValueError("ADMIN_API_TOKEN must be configured with at least 24 characters in production")
+            if "*" in {host.strip() for host in self.allowed_hosts.split(",")}:
+                raise ValueError("ALLOWED_HOSTS must not contain '*' in production")
+        return self
 
 
 @lru_cache

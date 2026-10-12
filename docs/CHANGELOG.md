@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.2 — V4 M3–M5 research integrity slices
+
+- Added consolidated/separate and original/amended BCTC metadata with migration `0008`.
+- Added multi-period fundamental history API and responsive financial trend table.
+- Added a deterministic public DCF calculator with explicit user assumptions and bull/base/bear scenarios.
+- Added news source, event-category and publication-time filters in API and dashboard.
+- Added evidence IDs plus post-generation citation/numeric verification for optional LLM answers.
+- Expanded the backend suite to 24 tests.
+
+## 0.4.1 — V4 M2 data-quality vertical slice
+
+- Added `/api/v1/data-quality` with securities/price coverage, freshness and explicit source limitations.
+- Added persisted latest-success/latest-failure connector timestamps in migration `0007`.
+- Added a responsive Vietnamese data-quality dashboard with honest fixture/configured/unavailable states.
+- Added regression coverage and verified backend lint/tests, clean migrations, frontend lint/build and desktop/mobile browser behavior.
+
+## 0.4.0 — V4 M1 security and reliability hardening
+
+- Split public valuation calculation from admin-only valuation persistence.
+- Added atomic database job claims, retry-pending state and stale-running recovery.
+- Added production configuration validation, global request-size limits and dedicated analyst rate limiting/audit metadata.
+- Added V4 baseline, progress and security review documentation.
+- Added concurrent execution, production-config and authorization regression tests; backend suite now has 21 tests.
+
 ## 0.3.0 — V3 hardening and fundamental research
 
 - Protected securities and financial-statement imports with environment-configured Bearer admin auth, reader/admin authorization, fixed-window rate limiting and audit logs.

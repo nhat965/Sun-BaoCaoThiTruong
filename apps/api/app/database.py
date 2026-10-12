@@ -106,6 +106,8 @@ class SourceHealthRecord(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     message: Mapped[str | None] = mapped_column(String(512))
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditLogRecord(Base):
@@ -123,7 +125,15 @@ class AuditLogRecord(Base):
 
 class FinancialPeriodRecord(Base):
     __tablename__ = "financial_periods"
-    __table_args__ = (UniqueConstraint("security_id", "period_end", "period_type"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "security_id",
+            "period_end",
+            "period_type",
+            "statement_scope",
+            name="uq_financial_period_scope",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
@@ -135,6 +145,8 @@ class FinancialPeriodRecord(Base):
     source_name: Mapped[str] = mapped_column(String(128))
     source_url: Mapped[str | None] = mapped_column(String(1024))
     verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
+    statement_scope: Mapped[str] = mapped_column(String(24), default="consolidated")
+    statement_status: Mapped[str] = mapped_column(String(24), default="original")
     unit: Mapped[str] = mapped_column(String(32), default="VND")
     currency: Mapped[str] = mapped_column(String(8), default="VND")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

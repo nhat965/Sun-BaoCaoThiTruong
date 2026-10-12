@@ -30,3 +30,6 @@ Financial statements are normalized into periods and statement items before rati
 - Secrets remain server-side environment variables.
 - CORS is restricted to the configured web origin.
 
+## V4 hardening
+
+State-changing routes are admin-protected, while public valuation is calculation-only. Persistent valuation uses a separate admin route. Jobs use database compare-and-set claims so multiple workers cannot execute one queued job twice. The analyst is an optional provider adapter over deterministic internal tools and never owns financial calculations.

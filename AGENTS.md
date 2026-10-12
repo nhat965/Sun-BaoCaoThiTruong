@@ -9,4 +9,6 @@
 - Fixture data must be visibly labeled and must never be selected in production implicitly.
 - Add tests for formulas and error paths. Run backend tests and frontend checks before handoff.
 - Do not commit credentials. Add configuration keys to `.env.example`.
+- V4 milestone statuses must use COMPLETE/PARTIAL/BLOCKED/NOT STARTED and cite executable evidence.
+- Public calculation endpoints must not persist shared state; persistent writes require explicit admin authorization and an audit event.
 

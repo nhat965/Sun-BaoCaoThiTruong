@@ -42,6 +42,16 @@ class FixedWindowRateLimiter:
 
 
 admin_rate_limiter = FixedWindowRateLimiter()
+llm_rate_limiter = FixedWindowRateLimiter()
+
+
+def enforce_llm_rate_limit(request: Request, config: Settings) -> None:
+    key = request.client.host if request.client else "unknown"
+    if not llm_rate_limiter.allow(key, config.llm_rate_limit_per_minute):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Giới hạn yêu cầu AI trong một phút đã đạt.",
+        )
 
 
 def _audit(
@@ -147,3 +157,7 @@ def audit_success(
         metadata=json.loads(result.model_dump_json()) if hasattr(result, "model_dump_json") else {},
         action=action,
     )
+
+
+def audit_event(request: Request, *, action: str, actor: str = "anonymous", metadata: dict | None = None) -> None:
+    _audit(request, actor=actor, outcome="accepted", action=action, metadata=metadata)

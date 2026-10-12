@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class Provenance(BaseModel):
@@ -113,6 +113,24 @@ class SourceStatus(BaseModel):
     message: str | None = None
 
 
+class SourceDiagnostic(SourceStatus):
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    consecutive_failures: int = 0
+
+
+class DataQualityReport(BaseModel):
+    generated_at: datetime
+    market_data_mode: Literal["live", "fixture"]
+    securities_count: int
+    active_securities_count: int
+    price_observations_count: int
+    last_market_timestamp: datetime | None = None
+    last_retrieval_timestamp: datetime | None = None
+    sources: list[SourceDiagnostic]
+    issues: list[str] = Field(default_factory=list)
+
+
 class SecuritiesImportResult(BaseModel):
     inserted: int
     updated: int
@@ -154,6 +172,16 @@ class FinancialMetricResult(BaseModel):
     period_type: str | None = None
     period_end: datetime | None = None
     source_name: str | None = None
+    statement_scope: Literal["consolidated", "separate"] | None = None
+    statement_status: Literal["original", "amended"] | None = None
+
+
+class FinancialTrendResponse(BaseModel):
+    symbol: str
+    period_type: Literal["quarter", "year", "ttm"]
+    statement_scope: Literal["consolidated", "separate"]
+    periods: list[FinancialMetricResult]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class FinancialStatementImportResult(BaseModel):
@@ -183,9 +211,29 @@ class ValuationResult(BaseModel):
     symbol: str
     method: str = "relative-pe-pb"
     scenarios: dict[str, float | None]
-    assumptions: dict[str, float | str]
+    assumptions: dict[str, object]
     warnings: list[str] = Field(default_factory=list)
     calculated_at: datetime
+
+
+class DCFRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(min_length=1, max_length=16)
+    forecast_free_cash_flows: list[float] = Field(min_length=1, max_length=10)
+    discount_rate: float = Field(gt=0, lt=1)
+    terminal_growth_rate: float = Field(ge=-0.5, lt=1)
+    net_debt: float = 0
+    shares_outstanding: float = Field(gt=0)
+    bull_multiplier: float = Field(default=1.1, gt=0, le=3)
+    bear_multiplier: float = Field(default=0.9, gt=0, le=3)
+    assumption_source: str = Field(default="user-assumption", max_length=128)
+
+    @model_validator(mode="after")
+    def terminal_growth_must_be_lower_than_discount(self):
+        if self.terminal_growth_rate >= self.discount_rate:
+            raise ValueError("terminal_growth_rate must be lower than discount_rate")
+        return self
 
 
 class AnalystRequest(BaseModel):
@@ -195,6 +243,7 @@ class AnalystRequest(BaseModel):
 
 
 class EvidenceRecord(BaseModel):
+    evidence_id: str = Field(pattern="^E[0-9]{3,}$")
     kind: Literal["fact", "calculation", "interpretation", "hypothesis", "forecast"]
     statement: str
     source: str | None = None

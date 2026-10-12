@@ -1,17 +1,18 @@
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from io import BytesIO
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analyst import AnalystService
 from app.analytics.fundamental import calculate_financial_metrics
-from app.analytics.valuation import calculate_relative_valuation
-from app.auth import Principal, audit_success, require_admin
+from app.analytics.valuation import calculate_dcf_valuation, calculate_relative_valuation
+from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
 from app.automation import (
     AutomationService,
     add_watchlist_item,
@@ -22,7 +23,15 @@ from app.automation import (
 from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError
 from app.connectors.fireant import FireAntConnector
-from app.database import JobRecord, SecurityRecord, SessionLocal, ValuationResultRecord, init_db
+from app.database import (
+    JobRecord,
+    PriceObservation,
+    SecurityRecord,
+    SessionLocal,
+    SourceHealthRecord,
+    ValuationResultRecord,
+    init_db,
+)
 from app.registry import import_securities_csv, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
@@ -31,14 +40,18 @@ from app.schemas import (
     AnalysisResponse,
     AnalystRequest,
     AnalystResponse,
+    DataQualityReport,
+    DCFRequest,
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    FinancialTrendResponse,
     JobRequest,
     JobResult,
     PriceSeries,
     SecuritiesImportResult,
     Security,
+    SourceDiagnostic,
     SourceStatus,
     TechnicalSnapshot,
     ValuationRequest,
@@ -70,6 +83,18 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=[host.strip() for host in settings.allowed_hosts.split(",") if host.strip()],
 )
+
+
+@app.middleware("http")
+async def request_size_limit(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > settings.max_request_bytes:
+        return StreamingResponse(
+            iter([b'{"detail":"Request body is too large."}']),
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            media_type="application/json",
+        )
+    return await call_next(request)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -90,15 +115,28 @@ def health(config: Settings = Depends(get_settings)) -> dict[str, str]:
 
 @app.get("/api/v1/sources", response_model=list[SourceStatus])
 def sources(config: Settings = Depends(get_settings)) -> list[SourceStatus]:
-    return [
+    market_source = (
         SourceStatus(
+            name="Synthetic fixture (development only)",
+            capabilities=["search", "historical_prices"],
+            authentication="none",
+            availability="fixture",
+            freshness="static deterministic series",
+            licensing="Development fixture; not market data.",
+            message="Chỉ dùng kiểm thử; không phải dữ liệu thị trường.",
+        )
+        if config.market_data_mode == "fixture"
+        else SourceStatus(
             name="Yahoo Finance chart",
             capabilities=["search", "historical_prices"],
             authentication="none",
-            availability="fixture" if config.market_data_mode == "fixture" else "configured",
+            availability="configured",
             freshness="daily/delayed",
             licensing="Development connector; verify commercial redistribution rights.",
-        ),
+        )
+    )
+    return [
+        market_source,
         *[
             SourceStatus(name=("VnExpress RSS" if url == "https://vnexpress.net/rss/kinh-doanh.rss" else url), capabilities=["news_metadata"], authentication="none", availability="configured", freshness="RSS publication schedule", licensing="Metadata and links only.")
             for url in config.news_feeds.split(",") if url.strip()
@@ -129,6 +167,63 @@ async def source_status(config: Settings = Depends(get_settings)) -> list[Source
         config.fireant_base_url, config.fireant_access_token, config.request_timeout_seconds
     ).status()
     return [item for item in static if item.name != "FireAnt"] + [fireant]
+
+
+@app.get("/api/v1/data-quality", response_model=DataQualityReport)
+def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
+    """Expose persisted source health and coverage without implying live connectivity."""
+    with SessionLocal() as session:
+        securities_count = session.scalar(select(func.count(SecurityRecord.id))) or 0
+        active_securities_count = (
+            session.scalar(
+                select(func.count(SecurityRecord.id)).where(
+                    SecurityRecord.listing_status == "active"
+                )
+            )
+            or 0
+        )
+        price_observations_count = session.scalar(select(func.count(PriceObservation.id))) or 0
+        last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
+        last_retrieval_timestamp = session.scalar(select(func.max(PriceObservation.ingested_at)))
+        health = {
+            row.source_name: row for row in session.scalars(select(SourceHealthRecord)).all()
+        }
+
+    diagnostics = []
+    for source in sources(config):
+        recorded = health.get(source.name)
+        diagnostics.append(
+            SourceDiagnostic(
+                **source.model_dump(exclude={"last_checked_at", "message"}),
+                last_checked_at=recorded.checked_at if recorded else source.last_checked_at,
+                message=recorded.message if recorded else source.message,
+                last_success_at=recorded.last_success_at if recorded else None,
+                last_failure_at=recorded.last_failure_at if recorded else None,
+                consecutive_failures=recorded.consecutive_failures if recorded else 0,
+            )
+        )
+
+    issues = []
+    if config.market_data_mode == "fixture":
+        issues.append("Đang dùng fixture tổng hợp; mọi số giá chỉ phục vụ kiểm thử.")
+    if not price_observations_count:
+        issues.append("Chưa có quan sát giá nào được lưu trong cơ sở dữ liệu.")
+    if any(item.availability == "configured" and item.last_success_at is None for item in diagnostics):
+        issues.append("Có nguồn đã cấu hình nhưng chưa có lần truy xuất thành công được xác minh.")
+    if active_securities_count < 100:
+        issues.append("Securities master mới là tập bootstrap, chưa có độ phủ toàn thị trường.")
+
+    return DataQualityReport(
+        generated_at=datetime.now(UTC),
+        market_data_mode="fixture" if config.market_data_mode == "fixture" else "live",
+        securities_count=securities_count,
+        active_securities_count=active_securities_count,
+        price_observations_count=price_observations_count,
+        last_market_timestamp=last_market_timestamp,
+        last_retrieval_timestamp=last_retrieval_timestamp,
+        sources=diagnostics,
+        issues=issues,
+    )
 
 
 @app.get("/api/v1/stocks/search", response_model=list[Security])
@@ -218,9 +313,49 @@ def fundamentals(symbol: str) -> FinancialMetricResult:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@app.get("/api/v1/stocks/{symbol}/fundamentals/history", response_model=FinancialTrendResponse)
+def fundamentals_history(
+    symbol: str,
+    period_type: str = Query("year", pattern="^(quarter|year|ttm)$"),
+    statement_scope: str = Query("consolidated", pattern="^(consolidated|separate)$"),
+    limit: int = Query(8, ge=1, le=20),
+) -> FinancialTrendResponse:
+    try:
+        with SessionLocal() as session:
+            return FinancialRepository(session).history(
+                symbol,
+                period_type=period_type,
+                statement_scope=statement_scope,
+                limit=limit,
+            )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
+    result = calculate_relative_valuation(inputs)
+    return result
+
+
 @app.post("/api/v1/fundamentals/valuation", response_model=ValuationResult)
 def valuation(inputs: ValuationRequest) -> ValuationResult:
-    result = calculate_relative_valuation(inputs)
+    """Public calculation only; it never writes shared state."""
+    return _calculate_valuation(inputs)
+
+
+@app.post("/api/v1/fundamentals/valuation/dcf", response_model=ValuationResult)
+def dcf_valuation(inputs: DCFRequest) -> ValuationResult:
+    """Public deterministic DCF calculation; assumptions are explicit and never persisted."""
+    return calculate_dcf_valuation(inputs)
+
+
+@app.post("/api/v1/fundamentals/valuation/persist", response_model=ValuationResult)
+def valuation_persist(
+    inputs: ValuationRequest,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+) -> ValuationResult:
+    result = _calculate_valuation(inputs)
     with SessionLocal() as session:
         security = session.scalar(
             select(SecurityRecord).where(SecurityRecord.symbol == inputs.symbol.strip().upper())
@@ -239,6 +374,7 @@ def valuation(inputs: ValuationRequest) -> ValuationResult:
                     )
                 )
             session.commit()
+    audit_success(request, principal, result, action="valuation.persist")
     return result
 
 
@@ -264,20 +400,61 @@ async def technicals(symbol: str, svc: AnalysisService = Depends(service)):
 
 
 @app.get("/api/v1/stocks/{symbol}/news")
-async def news(symbol: str, svc: AnalysisService = Depends(service)):
+async def news(
+    symbol: str,
+    limit: int = Query(20, ge=1, le=100),
+    source: str | None = Query(None, max_length=128),
+    event_category: str | None = Query(None, max_length=32),
+    published_from: datetime | None = None,
+    published_to: datetime | None = None,
+    svc: AnalysisService = Depends(service),
+):
+    if published_from and published_to and published_from > published_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="published_from must be before published_to",
+        )
     with SessionLocal() as session:
-        cached = NewsRepository(session).list(symbol)
+        cached = NewsRepository(session).list(
+            symbol,
+            limit,
+            source=source,
+            event_category=event_category,
+            published_from=published_from,
+            published_to=published_to,
+        )
     if cached:
         return {"items": cached, "coverage_note": "Metadata RSS đã chuẩn hóa/lưu trữ; có thể không đầy đủ."}
     with SessionLocal() as session:
         security = SecuritiesRepository(session).get(symbol)
     if security is None:
         raise HTTPException(404, detail={"code": "symbol_not_found", "message": "Mã chưa được hỗ trợ."})
-    return {"items": await svc.related_news(security), "coverage_note": "Metadata RSS; không tải toàn văn bài viết."}
+    await svc.related_news(security, limit=100)
+    with SessionLocal() as session:
+        filtered = NewsRepository(session).list(
+            symbol,
+            limit,
+            source=source,
+            event_category=event_category,
+            published_from=published_from,
+            published_to=published_to,
+        )
+    return {
+        "items": filtered,
+        "coverage_note": "Metadata RSS đã chuẩn hóa/lưu trữ; có thể không đầy đủ.",
+    }
 
 
 @app.post("/api/v1/analyst/chat", response_model=AnalystResponse)
-async def analyst_chat(payload: AnalystRequest, svc: AnalysisService = Depends(service)):
+async def analyst_chat(
+    payload: AnalystRequest, request: Request, svc: AnalysisService = Depends(service)
+):
+    enforce_llm_rate_limit(request, settings)
+    audit_event(
+        request,
+        action="analyst.chat",
+        metadata={"symbol": payload.symbol.strip().upper(), "question_length": len(payload.question)},
+    )
     return await AnalystService(settings, svc).answer(payload)
 
 

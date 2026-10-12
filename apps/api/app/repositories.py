@@ -25,6 +25,7 @@ from app.schemas import (
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    FinancialTrendResponse,
     NewsItem,
     PriceSeries,
     Security,
@@ -200,6 +201,7 @@ class SourceHealthRepository:
         message: str | None = None,
         latency_ms: int | None = None,
     ) -> None:
+        checked_at = datetime.now(UTC)
         current = self.session.scalar(
             select(SourceHealthRecord).where(SourceHealthRecord.source_name == source_name)
         )
@@ -207,24 +209,32 @@ class SourceHealthRepository:
             current = SourceHealthRecord(
                 source_name=source_name,
                 status=status,
-                checked_at=datetime.now(UTC),
+                checked_at=checked_at,
                 latency_ms=latency_ms,
                 message=message,
                 consecutive_failures=0 if status == "available" else 1,
+                last_success_at=checked_at if status == "available" else None,
+                last_failure_at=checked_at if status != "available" else None,
             )
             self.session.add(current)
         else:
             current.status = status
-            current.checked_at = datetime.now(UTC)
+            current.checked_at = checked_at
             current.latency_ms = latency_ms
             current.message = message
             current.consecutive_failures = (
                 0 if status == "available" else current.consecutive_failures + 1
             )
+            if status == "available":
+                current.last_success_at = checked_at
+            else:
+                current.last_failure_at = checked_at
 
 
 FINANCIAL_STATEMENT_TYPES = {"income", "balance", "cash_flow"}
 FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ttm"}
+FINANCIAL_STATEMENT_SCOPES = {"consolidated", "separate"}
+FINANCIAL_STATEMENT_STATUSES = {"original", "amended"}
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -266,6 +276,8 @@ class FinancialRepository:
                 if period_end is None:
                     raise ValueError("period_end is required")
                 period_type = (row.get("period_type") or "").strip().lower()
+                statement_scope = (row.get("statement_scope") or "consolidated").strip().lower()
+                statement_status = (row.get("statement_status") or "original").strip().lower()
                 statement_type = (row.get("statement_type") or "").strip().lower()
                 item_code = (row.get("item_code") or "").strip().lower()
                 if period_type not in FINANCIAL_PERIOD_TYPES:
@@ -273,6 +285,14 @@ class FinancialRepository:
                 if statement_type not in FINANCIAL_STATEMENT_TYPES:
                     raise ValueError(
                         f"statement_type must be one of {sorted(FINANCIAL_STATEMENT_TYPES)}"
+                    )
+                if statement_scope not in FINANCIAL_STATEMENT_SCOPES:
+                    raise ValueError(
+                        f"statement_scope must be one of {sorted(FINANCIAL_STATEMENT_SCOPES)}"
+                    )
+                if statement_status not in FINANCIAL_STATEMENT_STATUSES:
+                    raise ValueError(
+                        f"statement_status must be one of {sorted(FINANCIAL_STATEMENT_STATUSES)}"
                     )
                 if not item_code or len(item_code) > 64:
                     raise ValueError("item_code is required and must be <= 64 characters")
@@ -287,6 +307,7 @@ class FinancialRepository:
                         FinancialPeriodRecord.security_id == security.id,
                         FinancialPeriodRecord.period_end == period_end,
                         FinancialPeriodRecord.period_type == period_type,
+                        FinancialPeriodRecord.statement_scope == statement_scope,
                     )
                 )
                 source_name = (row.get("source_name") or default_source).strip()[:128]
@@ -303,6 +324,8 @@ class FinancialRepository:
                         verification_status=(
                             row.get("verification_status") or "unverified"
                         ).lower(),
+                        statement_scope=statement_scope,
+                        statement_status=statement_status,
                         unit=(row.get("unit") or "VND"),
                         currency=(row.get("currency") or "VND"),
                         updated_at=datetime.now(UTC),
@@ -316,11 +339,12 @@ class FinancialRepository:
                     period.verification_status = (
                         row.get("verification_status") or period.verification_status
                     ).lower()
+                    period.statement_status = statement_status
                     period.updated_at = datetime.now(UTC)
-                    period_key = (period_end, period_type)
+                    period_key = (period_end, f"{period_type}:{statement_scope}")
                     if period_key not in seen_periods:
                         updated_periods += 1
-                seen_periods.add((period_end, period_type))
+                seen_periods.add((period_end, f"{period_type}:{statement_scope}"))
                 item = self.session.scalar(
                     select(FinancialStatementItemRecord).where(
                         FinancialStatementItemRecord.period_id == period.id,
@@ -382,12 +406,15 @@ class FinancialRepository:
         )
         if not periods:
             raise LookupError(f"Chưa có dữ liệu BCTC cho {security.symbol}.")
-        current = periods[0]
+        current = next(
+            (period for period in periods if period.statement_scope == "consolidated"), periods[0]
+        )
         previous = next(
             (
                 period
                 for period in periods
                 if period.period_type == current.period_type
+                and period.statement_scope == current.statement_scope
                 and period.period_end < current.period_end
             ),
             None,
@@ -467,7 +494,109 @@ class FinancialRepository:
                 "period_type": current.period_type,
                 "period_end": current.period_end,
                 "source_name": current.source_name,
+                "statement_scope": current.statement_scope,
+                "statement_status": current.statement_status,
             }
+        )
+
+    def history(
+        self,
+        symbol: str,
+        *,
+        period_type: str = "year",
+        statement_scope: str = "consolidated",
+        limit: int = 8,
+    ) -> FinancialTrendResponse:
+        if period_type not in FINANCIAL_PERIOD_TYPES:
+            raise ValueError(f"period_type must be one of {sorted(FINANCIAL_PERIOD_TYPES)}")
+        if statement_scope not in FINANCIAL_STATEMENT_SCOPES:
+            raise ValueError(
+                f"statement_scope must be one of {sorted(FINANCIAL_STATEMENT_SCOPES)}"
+            )
+        security = self.session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
+        )
+        if security is None:
+            raise ValueError(f"Mã {symbol.strip().upper()} chưa có trong securities master.")
+        periods = list(
+            self.session.scalars(
+                select(FinancialPeriodRecord)
+                .where(
+                    FinancialPeriodRecord.security_id == security.id,
+                    FinancialPeriodRecord.period_type == period_type,
+                    FinancialPeriodRecord.statement_scope == statement_scope,
+                )
+                .order_by(FinancialPeriodRecord.period_end.asc())
+            )
+        )
+        if not periods:
+            raise LookupError(
+                f"Chưa có BCTC {statement_scope}/{period_type} cho {security.symbol}."
+            )
+
+        def values(period: FinancialPeriodRecord | None) -> dict[str, float]:
+            if period is None:
+                return {}
+            rows = self.session.scalars(
+                select(FinancialStatementItemRecord).where(
+                    FinancialStatementItemRecord.period_id == period.id
+                )
+            )
+            return {row.item_code: float(row.value) for row in rows}
+
+        selected = periods[-limit:]
+        results = []
+        for period in selected:
+            index = periods.index(period)
+            previous = periods[index - 1] if index > 0 else None
+            current_values = values(period)
+            previous_values = values(previous)
+            calculated = calculate_financial_metrics(
+                FinancialInputs(
+                    revenue=current_values.get("revenue"),
+                    prior_revenue=previous_values.get("revenue"),
+                    net_income=current_values.get("net_income"),
+                    prior_net_income=previous_values.get("net_income"),
+                    total_assets=current_values.get("total_assets"),
+                    prior_total_assets=previous_values.get("total_assets"),
+                    total_equity=current_values.get("total_equity"),
+                    prior_total_equity=previous_values.get("total_equity"),
+                    total_debt=current_values.get("total_debt"),
+                    current_assets=current_values.get("current_assets"),
+                    current_liabilities=current_values.get("current_liabilities"),
+                    operating_income=current_values.get("operating_income"),
+                    gross_profit=current_values.get("gross_profit"),
+                    interest_expense=current_values.get("interest_expense"),
+                    operating_cash_flow=current_values.get("operating_cash_flow"),
+                    capital_expenditure=current_values.get("capital_expenditure"),
+                    shares_outstanding=current_values.get("shares_outstanding"),
+                    enterprise_value=current_values.get("enterprise_value"),
+                    ebitda=current_values.get("ebitda"),
+                )
+            )
+            results.append(
+                calculated.model_copy(
+                    update={
+                        "symbol": security.symbol,
+                        "period_type": period.period_type,
+                        "period_end": period.period_end,
+                        "source_name": period.source_name,
+                        "statement_scope": period.statement_scope,
+                        "statement_status": period.statement_status,
+                    }
+                )
+            )
+        warnings = []
+        if any(period.statement_status == "amended" for period in selected):
+            warnings.append("Chuỗi có BCTC điều chỉnh; so sánh cần dùng phiên bản công bố mới nhất.")
+        if len(periods) < 3:
+            warnings.append("Chuỗi có ít hơn 3 kỳ; xu hướng dài hạn chưa đủ tin cậy.")
+        return FinancialTrendResponse(
+            symbol=security.symbol,
+            period_type=period_type,
+            statement_scope=statement_scope,
+            periods=results,
+            warnings=warnings,
         )
 
 
@@ -510,11 +639,33 @@ class NewsRepository:
         self.session.commit()
         return stored
 
-    def list(self, symbol: str, limit: int = 20) -> list[NewsItem]:
-        security = self.session.scalar(select(SecurityRecord).where(SecurityRecord.symbol == symbol.upper()))
+    def list(
+        self,
+        symbol: str,
+        limit: int = 20,
+        *,
+        source: str | None = None,
+        event_category: str | None = None,
+        published_from: datetime | None = None,
+        published_to: datetime | None = None,
+    ) -> list[NewsItem]:
+        security = self.session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == symbol.upper())
+        )
         if security is None:
             return []
-        rows = self.session.scalars(select(NewsArticleRecord).where(NewsArticleRecord.security_id == security.id).order_by(NewsArticleRecord.published_at.desc()).limit(limit)).all()
+        query = select(NewsArticleRecord).where(NewsArticleRecord.security_id == security.id)
+        if source:
+            query = query.where(NewsArticleRecord.source_name == source)
+        if event_category:
+            query = query.where(NewsArticleRecord.event_category == event_category)
+        if published_from:
+            query = query.where(NewsArticleRecord.published_at >= published_from)
+        if published_to:
+            query = query.where(NewsArticleRecord.published_at <= published_to)
+        rows = self.session.scalars(
+            query.order_by(NewsArticleRecord.published_at.desc()).limit(limit)
+        ).all()
         return [NewsItem(title=r.title, publisher=r.source_name, published_at=r.published_at, url=r.url,
             related_symbols=[symbol.upper()], relevance_score=float(r.relevance_score), event_category=r.event_category,
             source_credibility="established_media", source_url=r.source_url, retrieved_at=r.retrieved_at,
