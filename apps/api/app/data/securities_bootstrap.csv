@@ -1,0 +1,15 @@
+symbol,name,aliases,exchange,industry,sector,listing_status,security_type,provider_symbol,source_name,source_url
+HPG,CTCP Tập đoàn Hòa Phát,Hòa Phát|Hoa Phat,HOSE,Thép và sản phẩm thép,Nguyên vật liệu,active,stock,HPG.VN,bootstrap-manual,https://www.hsx.vn/
+FPT,CTCP FPT,FPT Corporation,HOSE,Công nghệ thông tin,Công nghệ,active,stock,FPT.VN,bootstrap-manual,https://www.hsx.vn/
+VCB,Ngân hàng TMCP Ngoại thương Việt Nam,Vietcombank|Ngoại thương,HOSE,Ngân hàng,Tài chính,active,stock,VCB.VN,bootstrap-manual,https://www.hsx.vn/
+VNM,CTCP Sữa Việt Nam,Vinamilk,HOSE,Thực phẩm,Tiêu dùng thiết yếu,active,stock,VNM.VN,bootstrap-manual,https://www.hsx.vn/
+HSG,CTCP Tập đoàn Hoa Sen,Hoa Sen,HOSE,Thép và sản phẩm thép,Nguyên vật liệu,active,stock,HSG.VN,bootstrap-manual,https://www.hsx.vn/
+NKG,CTCP Thép Nam Kim,Nam Kim,HOSE,Thép và sản phẩm thép,Nguyên vật liệu,active,stock,NKG.VN,bootstrap-manual,https://www.hsx.vn/
+SSI,CTCP Chứng khoán SSI,SSI Securities,HOSE,Dịch vụ tài chính,Tài chính,active,stock,SSI.VN,bootstrap-manual,https://www.hsx.vn/
+SHS,CTCP Chứng khoán Sài Gòn - Hà Nội,Saigon Hanoi Securities,HNX,Dịch vụ tài chính,Tài chính,active,stock,SHS.VN,bootstrap-manual,https://hnx.vn/
+PVS,Tổng CTCP Dịch vụ Kỹ thuật Dầu khí Việt Nam,PTSC,HNX,Dịch vụ dầu khí,Năng lượng,active,stock,PVS.VN,bootstrap-manual,https://hnx.vn/
+IDC,Tổng công ty IDICO - CTCP,IDICO,HNX,Bất động sản công nghiệp,Bất động sản,active,stock,IDC.VN,bootstrap-manual,https://hnx.vn/
+BSR,CTCP Lọc hóa dầu Bình Sơn,Lọc dầu Dung Quất|Binh Son Refining,UPCOM,Lọc hóa dầu,Năng lượng,active,stock,BSR.VN,bootstrap-manual,https://upcom.hnx.vn/vi-vn/cophieu-etfs/chung-khoan-uc.html
+ACV,Tổng công ty Cảng hàng không Việt Nam - CTCP,Airports Corporation of Vietnam,UPCOM,Hạ tầng hàng không,Công nghiệp,active,stock,ACV.VN,bootstrap-manual,https://upcom.hnx.vn/vi-vn/cophieu-etfs/chung-khoan-uc.html
+VGI,Tổng CTCP Đầu tư Quốc tế Viettel,Viettel Global,UPCOM,Viễn thông,Viễn thông,active,stock,VGI.VN,bootstrap-manual,https://upcom.hnx.vn/vi-vn/cophieu-etfs/chung-khoan-uc.html
+

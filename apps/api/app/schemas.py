@@ -1,0 +1,138 @@
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, HttpUrl
+
+
+class Provenance(BaseModel):
+    source: str
+    source_url: str | None = None
+    provider_symbol: str
+    retrieved_at: datetime
+    market_timestamp: datetime | None = None
+    mode: Literal["live", "fixture"]
+    delayed: bool = True
+    validation_status: Literal["valid", "partial", "invalid"] = "valid"
+    adjustment_policy: str = "unadjusted"
+    notes: str | None = None
+
+
+class Security(BaseModel):
+    symbol: str
+    name: str
+    exchange: str
+    currency: str = "VND"
+    aliases: list[str] = Field(default_factory=list)
+    industry: str | None = None
+    sector: str | None = None
+    listing_status: Literal["active", "inactive", "delisted", "suspended"] = "active"
+    security_type: str = "stock"
+    provider_ids: dict[str, str] = Field(default_factory=dict)
+    source_name: str | None = None
+    source_url: str | None = None
+    last_updated: datetime | None = None
+
+
+class PriceBar(BaseModel):
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class PriceSeries(BaseModel):
+    security: Security
+    interval: str
+    adjusted: bool
+    bars: list[PriceBar]
+    provenance: Provenance
+
+
+class IndicatorValue(BaseModel):
+    value: float | None
+    signal: Literal["positive", "negative", "neutral", "unavailable"]
+    explanation: str
+
+
+class TechnicalSnapshot(BaseModel):
+    formula_version: str = "technical-v2"
+    calculated_at: datetime
+    sample_size: int
+    indicators: dict[str, IndicatorValue]
+    component_scores: dict[str, float | None] = Field(default_factory=dict)
+    conflicts: list[str] = Field(default_factory=list)
+
+
+class NewsItem(BaseModel):
+    title: str
+    publisher: str
+    published_at: datetime | None = None
+    url: HttpUrl
+    related_symbols: list[str]
+    relevance_score: float = Field(default=0, ge=0, le=1)
+    event_category: str = "other"
+    source_credibility: Literal["official", "established_media", "unknown"] = "unknown"
+
+
+class AnalysisResponse(BaseModel):
+    security: Security
+    latest_price: float
+    previous_close: float | None
+    change_percent: float | None
+    prices: PriceSeries
+    technicals: TechnicalSnapshot
+    news: list[NewsItem]
+    summary: list[str]
+    limitations: list[str]
+    generated_at: datetime
+    evidence_count: int = Field(ge=0)
+    fundamental_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    fundamental_message: str = "Chưa có nguồn báo cáo tài chính được xác minh."
+    bullish_factors: list[str] = Field(default_factory=list)
+    bearish_factors: list[str] = Field(default_factory=list)
+    scenarios: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class SourceStatus(BaseModel):
+    name: str
+    capabilities: list[str]
+    authentication: str
+    availability: Literal["available", "configured", "unavailable", "fixture"]
+    freshness: str
+    licensing: str
+    last_checked_at: datetime | None = None
+    message: str | None = None
+
+
+class SecuritiesImportResult(BaseModel):
+    inserted: int
+    updated: int
+    rejected: int
+    errors: list[str]
+
+
+class FinancialInputs(BaseModel):
+    revenue: float | None = None
+    prior_revenue: float | None = None
+    net_income: float | None = None
+    prior_net_income: float | None = None
+    total_assets: float | None = None
+    total_equity: float | None = None
+    total_debt: float | None = None
+    current_assets: float | None = None
+    current_liabilities: float | None = None
+    operating_income: float | None = None
+    interest_expense: float | None = None
+    operating_cash_flow: float | None = None
+    capital_expenditure: float | None = None
+    shares_outstanding: float | None = None
+    market_price: float | None = None
+
+
+class FinancialMetricResult(BaseModel):
+    metrics: dict[str, float | None]
+    calculated_at: datetime
+    formula_version: str = "fundamental-v1"
+    warnings: list[str]

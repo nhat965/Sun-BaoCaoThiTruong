@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: market_intelligence
+      POSTGRES_USER: market
+      POSTGRES_PASSWORD: market_dev_only
+    ports: ["5432:5432"]
+    volumes: [market_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U market -d market_intelligence"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://market:market_dev_only@db:5432/market_intelligence
+      MARKET_DATA_MODE: live
+      WEB_ORIGIN: http://localhost:3000
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+  web:
+    build: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  market_db:
+
