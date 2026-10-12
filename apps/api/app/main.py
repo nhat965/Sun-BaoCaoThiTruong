@@ -11,7 +11,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analyst import AnalystService
 from app.analytics.fundamental import calculate_financial_metrics
-from app.analytics.valuation import calculate_dcf_valuation, calculate_relative_valuation
+from app.analytics.valuation import (
+    calculate_dcf_sensitivity,
+    calculate_dcf_valuation,
+    calculate_relative_valuation,
+)
 from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
 from app.automation import (
     AutomationService,
@@ -46,6 +50,8 @@ from app.schemas import (
     CorporateActionImportResult,
     DataQualityReport,
     DCFRequest,
+    DCFSensitivityRequest,
+    DCFSensitivityResult,
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
@@ -453,6 +459,15 @@ def valuation(inputs: ValuationRequest) -> ValuationResult:
 def dcf_valuation(inputs: DCFRequest) -> ValuationResult:
     """Public deterministic DCF calculation; assumptions are explicit and never persisted."""
     return calculate_dcf_valuation(inputs)
+
+
+@app.post(
+    "/api/v1/fundamentals/valuation/dcf/sensitivity",
+    response_model=DCFSensitivityResult,
+)
+def dcf_sensitivity(inputs: DCFSensitivityRequest) -> DCFSensitivityResult:
+    """Return null for invalid rate pairs instead of inventing a valuation."""
+    return calculate_dcf_sensitivity(inputs)
 
 
 @app.post("/api/v1/fundamentals/valuation/persist", response_model=ValuationResult)

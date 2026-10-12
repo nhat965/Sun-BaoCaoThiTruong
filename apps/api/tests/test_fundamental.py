@@ -1,8 +1,8 @@
 import pytest
 
 from app.analytics.fundamental import calculate_financial_metrics, growth
-from app.analytics.valuation import calculate_dcf_valuation
-from app.schemas import DCFRequest, FinancialInputs
+from app.analytics.valuation import calculate_dcf_sensitivity, calculate_dcf_valuation
+from app.schemas import DCFRequest, DCFSensitivityRequest, FinancialInputs
 
 
 def test_growth_and_core_ratios():
@@ -54,3 +54,19 @@ def test_dcf_uses_explicit_cash_flows_and_terminal_assumptions():
     assert result.method == "dcf-fcf"
     assert result.scenarios["base"] == pytest.approx(146.9481, abs=0.0001)
     assert result.assumptions["assumption_source"] == "user-assumption"
+
+
+def test_dcf_sensitivity_marks_invalid_rate_pairs_unavailable():
+    result = calculate_dcf_sensitivity(
+        DCFSensitivityRequest(
+            symbol="HPG",
+            forecast_free_cash_flows=[100, 110],
+            discount_rates=[0.03, 0.1],
+            terminal_growth_rates=[0.03, 0.04],
+            net_debt=50,
+            shares_outstanding=10,
+        )
+    )
+    assert result.values["0.03"]["0.03"] is None
+    assert result.values["0.1"]["0.03"] == pytest.approx(146.9481, abs=0.0001)
+    assert any("không khả dụng" in warning for warning in result.warnings)

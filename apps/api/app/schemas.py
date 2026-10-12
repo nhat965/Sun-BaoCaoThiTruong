@@ -265,6 +265,36 @@ class DCFRequest(BaseModel):
         return self
 
 
+class DCFSensitivityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(min_length=1, max_length=16)
+    forecast_free_cash_flows: list[float] = Field(min_length=1, max_length=10)
+    discount_rates: list[float] = Field(min_length=2, max_length=10)
+    terminal_growth_rates: list[float] = Field(min_length=2, max_length=10)
+    net_debt: float = 0
+    shares_outstanding: float = Field(gt=0)
+    assumption_source: str = Field(default="user-assumption", max_length=128)
+
+    @model_validator(mode="after")
+    def validate_sensitivity_rates(self):
+        if any(rate <= 0 or rate >= 1 for rate in self.discount_rates):
+            raise ValueError("discount_rates must be between 0 and 1")
+        if any(rate < -0.5 or rate >= 1 for rate in self.terminal_growth_rates):
+            raise ValueError("terminal_growth_rates must be between -0.5 and 1")
+        return self
+
+
+class DCFSensitivityResult(BaseModel):
+    symbol: str
+    discount_rates: list[float]
+    terminal_growth_rates: list[float]
+    values: dict[str, dict[str, float | None]]
+    assumptions: dict[str, object]
+    warnings: list[str] = Field(default_factory=list)
+    calculated_at: datetime
+
+
 class AnalystRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     symbol: str = Field(min_length=1, max_length=16)

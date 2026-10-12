@@ -104,6 +104,10 @@ curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/persist \
 curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/dcf \
   -H "Content-Type: application/json" \
   -d '{"symbol":"HPG","forecast_free_cash_flows":[100,110],"discount_rate":0.1,"terminal_growth_rate":0.03,"net_debt":50,"shares_outstanding":10}'
+# Ma trận nhạy cảm cũng chỉ dùng giả định do người dùng cung cấp:
+curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/dcf/sensitivity \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"HPG","forecast_free_cash_flows":[100,110],"discount_rates":[0.09,0.1,0.11],"terminal_growth_rates":[0.02,0.03,0.04],"net_debt":50,"shares_outstanding":10}'
 ```
 
 Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc và giao diện hiển thị trạng thái thiếu dữ liệu. Chỉ bật `MARKET_DATA_MODE=fixture` cho demo/test; dữ liệu sẽ được dán nhãn `fixture` rõ ràng.

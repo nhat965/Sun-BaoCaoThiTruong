@@ -74,4 +74,15 @@ Status: **PARTIAL** — all feasible local workflows are implemented; licensed f
 
 ## Milestones 3–8
 
+## Milestone 3 — Financial statements and valuation
+
+Status: **PARTIAL**
+
+- Quarterly growth now compares the same fiscal quarter in the prior year; annual/TTM records use the like-for-like prior fiscal year. Missing comparison periods remain null and are disclosed.
+- Added `POST /api/v1/fundamentals/valuation/dcf/sensitivity` for explicit user-supplied discount/growth grids. Invalid growth/discount pairs return null, not an invented value.
+- Ruff and 41 backend tests pass. No migration was required.
+- Historical valuation bands, peer and sector comparison remain blocked until verified historical multiples and classifications are supplied.
+
+## Milestones 4–8
+
 Status: **IN PROGRESS**. See `docs/IMPLEMENTATION_STATUS.md` for the truthful capability matrix and external blockers.

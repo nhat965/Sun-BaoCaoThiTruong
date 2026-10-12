@@ -51,6 +51,27 @@ def security_schema(row: SecurityRecord) -> Security:
     )
 
 
+def comparable_financial_period(
+    periods: list[FinancialPeriodRecord], current: FinancialPeriodRecord
+) -> FinancialPeriodRecord | None:
+    """Choose a like-for-like prior period; never compare adjacent incompatible quarters."""
+    candidates = [
+        period
+        for period in periods
+        if period.id != current.id
+        and period.period_type == current.period_type
+        and period.statement_scope == current.statement_scope
+        and period.fiscal_year == current.fiscal_year - 1
+    ]
+    if current.period_type == "quarter":
+        candidates = [
+            period
+            for period in candidates
+            if period.fiscal_quarter == current.fiscal_quarter
+        ]
+    return max(candidates, key=lambda period: period.period_end, default=None)
+
+
 class SecuritiesRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -438,16 +459,7 @@ class FinancialRepository:
         current = next(
             (period for period in periods if period.statement_scope == "consolidated"), periods[0]
         )
-        previous = next(
-            (
-                period
-                for period in periods
-                if period.period_type == current.period_type
-                and period.statement_scope == current.statement_scope
-                and period.period_end < current.period_end
-            ),
-            None,
-        )
+        previous = comparable_financial_period(periods, current)
 
         def values(period: FinancialPeriodRecord | None) -> dict[str, float]:
             if period is None:
@@ -576,8 +588,7 @@ class FinancialRepository:
         selected = periods[-limit:]
         results = []
         for period in selected:
-            index = periods.index(period)
-            previous = periods[index - 1] if index > 0 else None
+            previous = comparable_financial_period(periods, period)
             current_values = values(period)
             previous_values = values(previous)
             calculated = calculate_financial_metrics(
@@ -620,6 +631,10 @@ class FinancialRepository:
             warnings.append("Chuỗi có BCTC điều chỉnh; so sánh cần dùng phiên bản công bố mới nhất.")
         if len(periods) < 3:
             warnings.append("Chuỗi có ít hơn 3 kỳ; xu hướng dài hạn chưa đủ tin cậy.")
+        if any(comparable_financial_period(periods, period) is None for period in selected):
+            warnings.append(
+                "Một số kỳ không có kỳ so sánh cùng loại của năm trước; tăng trưởng được để trống."
+            )
         return FinancialTrendResponse(
             symbol=security.symbol,
             period_type=period_type,

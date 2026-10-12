@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 — V4.1 M3 financial correctness
+
+- Corrected quarterly growth comparison to use the same quarter in the prior fiscal year.
+- Added explicit-assumption DCF sensitivity matrices with unavailable invalid rate pairs.
+
 ## 0.5.1 — V4.1 M2 data coverage
 
 - Added authorized XLSX securities-master ingestion with provider IDs and batch duplicate detection.

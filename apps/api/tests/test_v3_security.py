@@ -251,3 +251,31 @@ def test_financial_statement_csv_pipeline_and_relative_valuation():
             json={"symbol": "V3B", "eps": 2.0, "bvps": 10.0, "pe_multiple": 10.0, "pb_multiple": 2.0},
         )
         assert persisted.status_code == 200
+
+
+def test_quarterly_growth_compares_same_quarter_prior_year():
+    admin = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        client.post(
+            "/api/v1/securities/import",
+            headers=admin,
+            content="symbol,name,exchange\nQTR,Quarter Test,HNX\n",
+        )
+        content = """period_end,period_type,fiscal_year,fiscal_quarter,statement_type,item_code,value,verification_status
+2023-03-31T00:00:00+00:00,quarter,2023,1,income,revenue,100,verified
+2023-12-31T00:00:00+00:00,quarter,2023,4,income,revenue,200,verified
+2024-03-31T00:00:00+00:00,quarter,2024,1,income,revenue,150,verified
+"""
+        imported = client.post(
+            "/api/v1/stocks/QTR/financials/import",
+            headers=admin,
+            content=content,
+        )
+        assert imported.status_code == 200
+        history = client.get(
+            "/api/v1/stocks/QTR/fundamentals/history?period_type=quarter"
+        )
+        assert history.status_code == 200
+        periods = history.json()["periods"]
+        assert periods[-1]["metrics"]["revenue_growth_percent"] == 50
+        assert periods[-2]["metrics"]["revenue_growth_percent"] is None
