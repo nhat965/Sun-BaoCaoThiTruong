@@ -73,6 +73,10 @@ curl -X POST http://localhost:8000/api/v1/stocks/HPG/financials/import \
 curl http://localhost:8000/api/v1/stocks/HPG/fundamentals
 curl -X POST http://localhost:8000/api/v1/analyst/chat -H "Content-Type: application/json" \
   -d '{"symbol":"HPG","question":"Tóm tắt rủi ro và dữ liệu cần theo dõi"}'
+# Public valuation calculation does not persist. Persisting a scenario requires admin auth:
+curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/persist \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"symbol":"HPG","eps":2,"bvps":10,"pe_multiple":10,"pb_multiple":2}'
 ```
 
 Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc và giao diện hiển thị trạng thái thiếu dữ liệu. Chỉ bật `MARKET_DATA_MODE=fixture` cho demo/test; dữ liệu sẽ được dán nhãn `fixture` rõ ràng.

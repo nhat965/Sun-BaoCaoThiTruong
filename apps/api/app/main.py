@@ -11,7 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.analyst import AnalystService
 from app.analytics.fundamental import calculate_financial_metrics
 from app.analytics.valuation import calculate_relative_valuation
-from app.auth import Principal, audit_success, require_admin
+from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
 from app.automation import (
     AutomationService,
     add_watchlist_item,
@@ -70,6 +70,18 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=[host.strip() for host in settings.allowed_hosts.split(",") if host.strip()],
 )
+
+
+@app.middleware("http")
+async def request_size_limit(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > settings.max_request_bytes:
+        return StreamingResponse(
+            iter([b'{"detail":"Request body is too large."}']),
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            media_type="application/json",
+        )
+    return await call_next(request)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -218,9 +230,24 @@ def fundamentals(symbol: str) -> FinancialMetricResult:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
+    result = calculate_relative_valuation(inputs)
+    return result
+
+
 @app.post("/api/v1/fundamentals/valuation", response_model=ValuationResult)
 def valuation(inputs: ValuationRequest) -> ValuationResult:
-    result = calculate_relative_valuation(inputs)
+    """Public calculation only; it never writes shared state."""
+    return _calculate_valuation(inputs)
+
+
+@app.post("/api/v1/fundamentals/valuation/persist", response_model=ValuationResult)
+def valuation_persist(
+    inputs: ValuationRequest,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+) -> ValuationResult:
+    result = _calculate_valuation(inputs)
     with SessionLocal() as session:
         security = session.scalar(
             select(SecurityRecord).where(SecurityRecord.symbol == inputs.symbol.strip().upper())
@@ -239,6 +266,7 @@ def valuation(inputs: ValuationRequest) -> ValuationResult:
                     )
                 )
             session.commit()
+    audit_success(request, principal, result, action="valuation.persist")
     return result
 
 
@@ -277,7 +305,15 @@ async def news(symbol: str, svc: AnalysisService = Depends(service)):
 
 
 @app.post("/api/v1/analyst/chat", response_model=AnalystResponse)
-async def analyst_chat(payload: AnalystRequest, svc: AnalysisService = Depends(service)):
+async def analyst_chat(
+    payload: AnalystRequest, request: Request, svc: AnalysisService = Depends(service)
+):
+    enforce_llm_rate_limit(request, settings)
+    audit_event(
+        request,
+        action="analyst.chat",
+        metadata={"symbol": payload.symbol.strip().upper(), "question_length": len(payload.question)},
+    )
     return await AnalystService(settings, svc).answer(payload)
 
 

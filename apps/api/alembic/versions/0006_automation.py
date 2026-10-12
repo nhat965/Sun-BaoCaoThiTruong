@@ -1,5 +1,6 @@
 """idempotent jobs, watchlists and alert persistence"""
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0006"

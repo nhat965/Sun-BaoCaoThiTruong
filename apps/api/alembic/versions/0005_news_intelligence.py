@@ -1,5 +1,6 @@
 """store normalized, deduplicated news metadata and event groups"""
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0005"

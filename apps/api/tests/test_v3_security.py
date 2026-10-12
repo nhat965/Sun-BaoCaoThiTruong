@@ -155,3 +155,15 @@ def test_financial_statement_csv_pipeline_and_relative_valuation():
         )
         assert valuation.status_code == 200
         assert valuation.json()["scenarios"]["base"] == 23.25
+
+        blocked_persist = client.post(
+            "/api/v1/fundamentals/valuation/persist",
+            json={"symbol": "V3B", "eps": 2.0, "bvps": 10.0, "pe_multiple": 10.0, "pb_multiple": 2.0},
+        )
+        assert blocked_persist.status_code == 401
+        persisted = client.post(
+            "/api/v1/fundamentals/valuation/persist",
+            headers={"Authorization": "Bearer test-admin-token"},
+            json={"symbol": "V3B", "eps": 2.0, "bvps": 10.0, "pe_multiple": 10.0, "pb_multiple": 2.0},
+        )
+        assert persisted.status_code == 200
