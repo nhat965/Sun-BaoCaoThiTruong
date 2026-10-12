@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — V4 M1 security and reliability hardening
+
+- Split public valuation calculation from admin-only valuation persistence.
+- Added atomic database job claims, retry-pending state and stale-running recovery.
+- Added production configuration validation, global request-size limits and dedicated analyst rate limiting/audit metadata.
+- Added V4 baseline, progress and security review documentation.
+- Added concurrent execution, production-config and authorization regression tests; backend suite now has 21 tests.
+
 ## 0.3.0 — V3 hardening and fundamental research
 
 - Protected securities and financial-statement imports with environment-configured Bearer admin auth, reader/admin authorization, fixed-window rate limiting and audit logs.

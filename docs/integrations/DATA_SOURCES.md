@@ -24,3 +24,4 @@ An isolated connector can check the documented `/monitoring/status` endpoint whe
 
 No connector is implemented. The product will prefer manual/CSV portfolio import until an official, documented, read-only integration is available. It will not reverse-engineer login or trading endpoints.
 
+V4 source rule: a feed is operational only after a real request succeeds. `NEWS_FEEDS` may list authorized RSS URLs, but configured-only URLs are reported as unverified and do not count as live coverage. Yahoo remains a development source without a commercial licensing claim; FireAnt, VPS and live financial/social providers remain credential or entitlement dependent.

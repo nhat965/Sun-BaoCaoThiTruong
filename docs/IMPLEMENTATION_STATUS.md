@@ -24,4 +24,18 @@
 | Dark mode | NOT STARTED | Current design remains light-only. |
 | Docker verification | BLOCKED | Docker engine was unavailable in the execution environment. |
 
-Statuses are evidence-based: `DONE` means implemented and locally verified, `PARTIAL` means a useful vertical slice exists with an explicit gap, and `BLOCKED` requires credentials, rights or infrastructure not provided here.
+## V4 milestone status
+
+| Milestone | Status | Evidence / remaining gap |
+|---|---|---|
+| M1 Security and reliability | COMPLETE | Protected valuation persistence, atomic job claiming/retry recovery, request/LLM limits, production config validation; 21 backend tests pass. Shared rate-limit backend remains for multi-worker deployment. |
+| M2 Reliable Vietnamese financial data | PARTIAL | Authorized securities CSV and Yahoo development connector are traceable; full-market synchronization and licensed providers are not configured. |
+| M3 Fundamental research and valuation | PARTIAL | Deterministic stored-period metrics and relative valuation exist; trends, peers, historical bands and DCF remain. |
+| M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline and event storage exist; more than one genuinely live authorized feed is not configured. |
+| M5 AI analyst and verification | PARTIAL | Typed evidence response, optional provider, limits and audit exist; numeric claim/citation validation remains. |
+| M6 Social sentiment | NOT STARTED | No authorized discussion dataset supplied. |
+| M7 Daily reporting | PARTIAL | Persistent jobs and report endpoint exist; production scheduler, trading calendar and delivery channels remain. |
+| M8 Portfolio/VPS | NOT STARTED | Manual portfolio workflows are not implemented; VPS remains blocked pending official API. |
+| M9 Release readiness | PARTIAL | Local lint/tests/build/migrations pass; CI, Docker smoke and dependency scan remain. |
+
+Statuses are evidence-based: `COMPLETE` means implemented and locally verified, `PARTIAL` means a useful vertical slice exists with an explicit gap, and `BLOCKED` requires credentials, rights or infrastructure not provided here.

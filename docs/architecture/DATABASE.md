@@ -18,3 +18,4 @@ Alembic `0001` creates the MVP audit schema. Migration `0002` adds a database-ba
 
 For an unversioned legacy MVP database, run `python scripts/adopt_legacy_database.py` before `alembic upgrade head`. The script refuses unknown layouts and stamps only a verified baseline or already-complete V2 schema.
 
+V4 adds audit-safe valuation persistence and atomic automation state transitions. `jobs.status` is `QUEUED`, `RUNNING`, `RETRY_PENDING` or `FAILED/SUCCESS`; a unique idempotency key prevents duplicate scheduled rows and `job_runs` records execution attempts.
