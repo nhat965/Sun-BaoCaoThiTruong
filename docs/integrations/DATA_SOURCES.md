@@ -10,11 +10,15 @@ Implemented for public RSS metadata. The application stores/returns headline, pu
 
 ## FireAnt
 
-An isolated connector can check the documented `/monitoring/status` endpoint when `FIREANT_ACCESS_TOKEN` is configured. Without a token it reports `blocked` and performs no request. Market-data capabilities remain unimplemented until credentials, scopes, entitlements and redistribution rights are verified by a successful real request.
+An isolated connector can check the documented `/monitoring/status` endpoint when `FIREANT_ACCESS_TOKEN` is configured. Without a token it reports `unavailable` with a `BLOCKED` message and performs no request. Market-data capabilities remain unimplemented until credentials, scopes, entitlements and redistribution rights are verified by a successful real request.
 
 ## Securities master
 
 `app/data/securities_bootstrap.csv` is a visibly sourced, non-comprehensive bootstrap set. Operators can import an authorized CSV through `POST /api/v1/securities/import`; symbol, Vietnamese name/aliases, exchange and provenance are persisted without code changes. No exchange page is scraped implicitly.
+
+## Financial statements
+
+`POST /stocks/{symbol}/financials/import` accepts an authorized CSV with period, statement type, normalized item code, value, source, reporting and verification metadata. The system stores periods/items first, then calculates ratios from stored rows. No endpoint labels a manual/CSV source as live. A provider interface is reserved for FireAnt or another licensed feed; it remains disconnected until a real authorized request succeeds.
 
 ## VPS SmartOne
 

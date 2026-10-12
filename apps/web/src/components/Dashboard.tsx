@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Analysis } from "@/lib/types";
+import type { Analysis, AnalystResponse, FinancialMetricResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
@@ -15,6 +15,9 @@ function formatDate(value: string | null) {
 export function Dashboard() {
   const [symbol, setSymbol] = useState("HPG");
   const [data, setData] = useState<Analysis | null>(null);
+  const [fundamentals, setFundamentals] = useState<FinancialMetricResult | null>(null);
+  const [analyst, setAnalyst] = useState<AnalystResponse | null>(null);
+  const [analystLoading, setAnalystLoading] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -35,9 +38,13 @@ export function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      setData(await fetchAnalysis(nextSymbol));
+      const analysis = await fetchAnalysis(nextSymbol);
+      setData(analysis);
+      const fundamentalResponse = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
+      setFundamentals(fundamentalResponse.ok ? await fundamentalResponse.json() : null);
     } catch (reason) {
       setData(null);
+      setFundamentals(null);
       setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu.");
     } finally {
       setLoading(false);
@@ -46,7 +53,11 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchAnalysis("HPG")
-      .then(setData)
+      .then(async (analysis) => {
+        setData(analysis);
+        const response = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
+        setFundamentals(response.ok ? await response.json() : null);
+      })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu."))
       .finally(() => setLoading(false));
   }, []);
@@ -66,6 +77,15 @@ export function Dashboard() {
     anchor.download = `${data.security.symbol}-research-report.pdf`;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function askAnalyst() {
+    if (!data) return;
+    setAnalystLoading(true);
+    try {
+      const response = await fetch(`${API}/analyst/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: data.security.symbol, question: "Tóm tắt dữ liệu hiện có, rủi ro và điều kiện cần theo dõi." }) });
+      setAnalyst(response.ok ? await response.json() : { status: "unavailable", symbol: data.security.symbol, answer: "Không thể gọi analyst lúc này.", sections: {}, limitations: [] });
+    } finally { setAnalystLoading(false); }
   }
 
   const indicators = data ? ["sma20", "sma50", "rsi14", "macd", "atr14", "max_drawdown"] : [];
@@ -108,6 +128,11 @@ export function Dashboard() {
         {data.technicals.conflicts.length > 0 && <div className="conflict" role="note"><strong>Tín hiệu xung đột</strong>{data.technicals.conflicts.map((item) => <p key={item}>{item}</p>)}</div>}
       </section>
 
+      <section className="fundamental-section">
+        <div className="section-head"><div><p className="eyebrow">Phân tích cơ bản</p><h2>BCTC đã lưu trong hệ thống</h2></div><p>{fundamentals ? `Kỳ ${fundamentals.period_type ?? "không xác định"} · ${formatDate(fundamentals.period_end)} · nguồn ${fundamentals.source_name ?? "không rõ"}` : "Chưa có BCTC hợp lệ được kết nối cho mã này."}</p></div>
+        {fundamentals ? <><div className="metric-grid">{[["Doanh thu tăng trưởng", "revenue_growth_percent", "%"], ["Lợi nhuận tăng trưởng", "net_income_growth_percent", "%"], ["ROE", "roe_percent", "%"], ["ROA", "roa_percent", "%"], ["Biên ròng", "net_margin_percent", "%"], ["D/E", "debt_to_equity", "x"], ["Current ratio", "current_ratio", "x"], ["EPS", "eps", ""], ["P/E", "pe", "x"]].map(([label, key, suffix]) => <article key={key}><span>{label}</span><strong>{fundamentals.metrics[key] === null || fundamentals.metrics[key] === undefined ? "—" : `${decimal.format(fundamentals.metrics[key] as number)}${suffix}`}</strong></article>)}</div><ul className="metric-warnings">{fundamentals.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></> : <div className="empty">Hãy nạp CSV BCTC được cấp phép qua endpoint quản trị để bật phân tích theo quý/năm. Không suy đoán số liệu còn thiếu.</div>}
+      </section>
+
       <section className="research-case">
         <div className="section-head"><div><h2>Luận điểm hai chiều</h2></div><p>{data.fundamental_message}</p></div>
         <div className="case-grid"><article><h3>Yếu tố hỗ trợ</h3>{data.bullish_factors.length ? <ul>{data.bullish_factors.map((item) => <li key={item}>{item}</li>)}</ul> : <p>Chưa có yếu tố hỗ trợ đủ mạnh theo ngưỡng hiện tại.</p>}</article><article><h3>Yếu tố làm suy yếu</h3><ul>{data.bearish_factors.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
@@ -115,6 +140,8 @@ export function Dashboard() {
       </section>
 
       <section className="news-section" id="news"><div className="section-head"><div><p className="eyebrow">Tin liên quan</p><h2>Tiêu đề khớp từ RSS</h2></div><p>Metadata và liên kết gốc; không sao chép nội dung bài viết.</p></div>{data.news.length ? <div className="news-list">{data.news.map((item) => <a key={item.url} href={item.url} target="_blank" rel="noreferrer"><span>{item.publisher} · {formatDate(item.published_at)}</span><strong>{item.title}</strong><b>Đọc nguồn ↗</b></a>)}</div> : <div className="empty">Không tìm thấy tiêu đề RSS phù hợp trong cửa sổ hiện tại.</div>}</section>
+
+      <section className="analyst-section"><div className="section-head"><div><p className="eyebrow">AI analyst có căn cứ</p><h2>Hỏi trên dữ liệu đã truy xuất</h2></div><button onClick={() => void askAnalyst()} disabled={analystLoading}>{analystLoading ? "Đang tổng hợp…" : "Tóm tắt có evidence"}</button></div>{analyst ? <><p>{analyst.answer}</p>{analyst.limitations.map((item) => <small key={item}>{item}</small>)}</> : <div className="empty">Không gửi dữ liệu người dùng hoặc bí mật tới trình duyệt; analyst chỉ dùng tool outputs nội bộ.</div>}</section>
 
       <section className="evidence" id="sources"><div><p className="eyebrow">Dấu vết bằng chứng</p><h2>{data.evidence_count} mục dữ liệu hỗ trợ</h2></div><dl><div><dt>Chế độ</dt><dd>{data.prices.provenance.mode}</dd></div><div><dt>Truy xuất</dt><dd>{formatDate(data.prices.provenance.retrieved_at)}</dd></div><div><dt>Điều chỉnh giá</dt><dd>Chưa xác nhận đầy đủ</dd></div></dl><ul>{data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
     </>}

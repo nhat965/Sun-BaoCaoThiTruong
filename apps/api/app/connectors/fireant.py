@@ -59,3 +59,12 @@ class FireAntConnector:
             last_checked_at=datetime.now(UTC),
             message=f"{message} latency={int((perf_counter() - started) * 1000)}ms",
         )
+
+    async def prices(self, *args, **kwargs):
+        raise RuntimeError("FireAnt price scope is not verified; no data request was made.")
+
+    async def financials(self, *args, **kwargs):
+        raise RuntimeError("FireAnt finance-read scope is not verified; no data request was made.")
+
+    async def news(self, *args, **kwargs):
+        raise RuntimeError("FireAnt posts-read scope is not verified; no data request was made.")

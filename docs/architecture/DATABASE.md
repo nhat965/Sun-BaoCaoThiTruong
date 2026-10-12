@@ -7,6 +7,12 @@ Alembic `0001` creates the MVP audit schema. Migration `0002` adds a database-ba
 - `analysis_runs`: formula version, coverage and serialized provenance for each completed analysis.
 - `generated_reports`: report audit record/storage key.
 - `source_health`: last known connector health and consecutive failures.
+- `audit_logs`: actor, action, outcome, source IP and bounded metadata for privileged writes.
+- `financial_periods`: reporting period, type, publication date, unit, source and verification state.
+- `financial_statement_items`: normalized income/balance/cash-flow items per period.
+- `financial_metrics`: reproducible calculated ratios and formula version.
+- `valuation_results`: scenario values and the assumptions used.
+- `corporate_actions`: source-backed action records reserved for future adjustment policies.
 
 `PriceRepository` performs incremental upserts against `uq_price_point`; repeated requests update a point instead of multiplying rows. Production schema changes use Alembic. `Base.metadata.create_all` remains a local/test convenience only.
 

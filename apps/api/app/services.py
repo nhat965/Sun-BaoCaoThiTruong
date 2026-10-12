@@ -4,17 +4,23 @@ from datetime import UTC, datetime
 from app.analytics.technical import calculate_snapshot, percentage_change
 from app.config import Settings
 from app.connectors.manager import ConnectorManager
-from app.connectors.news import VnExpressRssConnector
+from app.connectors.news import RssNewsConnector, VnExpressRssConnector
 from app.database import AnalysisRun, SessionLocal
 from app.normalization import normalize_price_series
-from app.repositories import PriceRepository
+from app.repositories import NewsRepository, PriceRepository
 from app.schemas import AnalysisResponse, PriceSeries
 
 
 class AnalysisService:
     def __init__(self, settings: Settings) -> None:
         self.manager = ConnectorManager(settings)
-        self.news = VnExpressRssConnector(settings.request_timeout_seconds)
+        feeds = [feed.strip() for feed in settings.news_feeds.split(",") if feed.strip()]
+        self.news_connectors = [
+            VnExpressRssConnector(settings.request_timeout_seconds)
+            if feed == VnExpressRssConnector.feed_url
+            else RssNewsConnector(feed, feed, settings.request_timeout_seconds)
+            for feed in feeds
+        ]
         self.fixture_mode = settings.market_data_mode == "fixture"
 
     async def prices(self, symbol: str, limit: int = 260) -> PriceSeries:
@@ -28,7 +34,7 @@ class AnalysisService:
         prices = await self.prices(symbol)
         bars = prices.bars
         technicals = calculate_snapshot(bars)
-        news = [] if self.fixture_mode else await self.news.related(prices.security)
+        news = [] if self.fixture_mode else await self.related_news(prices.security)
         previous = bars[-2].close if len(bars) > 1 else None
         change = percentage_change(bars[-1].close, previous) if previous is not None else None
         scores = technicals.component_scores
@@ -118,3 +124,17 @@ class AnalysisService:
             )
             session.commit()
         return result
+
+    async def related_news(self, security, limit: int = 20):
+        if self.fixture_mode:
+            return []
+        combined = []
+        for connector in self.news_connectors:
+            combined.extend(await connector.related(security, limit=limit))
+        dedup = {}
+        for item in combined:
+            dedup[(item.publisher, str(item.url))] = item
+        items = sorted(dedup.values(), key=lambda item: item.published_at or datetime.min.replace(tzinfo=UTC), reverse=True)[:limit]
+        with SessionLocal() as session:
+            NewsRepository(session).store(security.symbol, items)
+        return items

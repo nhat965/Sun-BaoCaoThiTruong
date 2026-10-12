@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class Provenance(BaseModel):
@@ -74,6 +74,13 @@ class NewsItem(BaseModel):
     relevance_score: float = Field(default=0, ge=0, le=1)
     event_category: str = "other"
     source_credibility: Literal["official", "established_media", "unknown"] = "unknown"
+    source_url: str | None = None
+    retrieved_at: datetime | None = None
+    event_summary: str | None = None
+    facts: list[str] = Field(default_factory=list)
+    implications: list[str] = Field(default_factory=list)
+    uncertainty: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):
@@ -114,21 +121,28 @@ class SecuritiesImportResult(BaseModel):
 
 
 class FinancialInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     revenue: float | None = None
     prior_revenue: float | None = None
     net_income: float | None = None
     prior_net_income: float | None = None
     total_assets: float | None = None
+    prior_total_assets: float | None = None
     total_equity: float | None = None
+    prior_total_equity: float | None = None
     total_debt: float | None = None
     current_assets: float | None = None
     current_liabilities: float | None = None
     operating_income: float | None = None
+    gross_profit: float | None = None
     interest_expense: float | None = None
     operating_cash_flow: float | None = None
     capital_expenditure: float | None = None
     shares_outstanding: float | None = None
     market_price: float | None = None
+    enterprise_value: float | None = None
+    ebitda: float | None = None
 
 
 class FinancialMetricResult(BaseModel):
@@ -136,3 +150,97 @@ class FinancialMetricResult(BaseModel):
     calculated_at: datetime
     formula_version: str = "fundamental-v1"
     warnings: list[str]
+    symbol: str | None = None
+    period_type: str | None = None
+    period_end: datetime | None = None
+    source_name: str | None = None
+
+
+class FinancialStatementImportResult(BaseModel):
+    inserted_periods: int
+    updated_periods: int
+    inserted_items: int
+    updated_items: int
+    rejected: int
+    errors: list[str]
+
+
+class ValuationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    eps: float = Field(gt=0)
+    bvps: float = Field(gt=0)
+    pe_multiple: float = Field(gt=0, le=200)
+    pb_multiple: float = Field(gt=0, le=50)
+    bull_multiplier: float = Field(default=1.15, gt=0, le=3)
+    base_multiplier: float = Field(default=1.0, gt=0, le=3)
+    bear_multiplier: float = Field(default=0.8, gt=0, le=3)
+    assumption_source: str = "user-assumption"
+
+
+class ValuationResult(BaseModel):
+    symbol: str
+    method: str = "relative-pe-pb"
+    scenarios: dict[str, float | None]
+    assumptions: dict[str, float | str]
+    warnings: list[str] = Field(default_factory=list)
+    calculated_at: datetime
+
+
+class AnalystRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    question: str = Field(min_length=3, max_length=2000)
+
+
+class EvidenceRecord(BaseModel):
+    kind: Literal["fact", "calculation", "interpretation", "hypothesis", "forecast"]
+    statement: str
+    source: str | None = None
+    retrieved_at: datetime | None = None
+    market_timestamp: datetime | None = None
+    confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+
+
+class AnalystResponse(BaseModel):
+    status: Literal["available", "unavailable", "partial"]
+    symbol: str
+    answer: str
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    evidence: list[EvidenceRecord] = Field(default_factory=list)
+    tool_outputs: dict[str, object] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class JobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+    scheduled_for: datetime | None = None
+
+
+class JobResult(BaseModel):
+    id: int
+    job_type: str
+    symbol: str
+    scheduled_for: datetime
+    status: str
+    attempts: int
+    last_error: str | None = None
+
+
+class WatchlistRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+
+
+class WatchlistItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=16)
+
+
+class AlertRuleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rule_type: Literal["technical_score", "news_event"]
+    threshold: float | None = None

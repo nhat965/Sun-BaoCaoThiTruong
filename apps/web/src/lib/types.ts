@@ -46,3 +46,22 @@ export interface Analysis {
   scenarios: Record<string, string[]>;
 }
 
+export interface FinancialMetricResult {
+  metrics: Record<string, number | null>;
+  calculated_at: string;
+  formula_version: string;
+  warnings: string[];
+  symbol: string | null;
+  period_type: string | null;
+  period_end: string | null;
+  source_name: string | null;
+}
+
+export interface AnalystResponse {
+  status: "available" | "partial" | "unavailable";
+  symbol: string;
+  answer: string;
+  sections: Record<string, string[]>;
+  limitations: string[];
+}
+

@@ -6,6 +6,7 @@ from app.analytics.technical import (
     ema,
     macd,
     maximum_drawdown,
+    mfi,
     obv,
     percentage_change,
     rsi,
@@ -39,6 +40,10 @@ def test_rsi_reference_extremes():
     assert rsi(list(range(1, 20))) == 100
     assert rsi(list(range(20, 1, -1))) == 0
     assert rsi([10] * 20) == 50
+
+
+def test_mfi_flat_money_flow_is_neutral():
+    assert mfi(bars([10] * 30)) == 50
 
 
 def test_macd_bollinger_atr_volume_and_drawdown():
