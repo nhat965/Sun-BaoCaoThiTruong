@@ -40,4 +40,38 @@ Milestone 2 extends registry synchronization, provider/data-quality detail and c
 
 ## Milestones 2–8
 
+## Milestone 2 — Vietnamese market-data foundation
+
+Status: **PARTIAL** — all feasible local workflows are implemented; licensed full-market data remains blocked.
+
+### Implemented
+
+- Added authorized XLSX securities-master import alongside CSV, including incremental upsert, duplicate rejection, inactive/delisted statuses, provider ID maps and Vietnamese search compatibility.
+- Added authorized corporate-action CSV storage and retrieval for splits, cash dividends, bonus shares and rights issues. No action is inferred and no price is silently adjusted.
+- Migration `0010` persists zero-volume, over-20% jump and over-four-day calendar-gap flags on each price observation.
+- `/api/v1/data-quality` now reports active symbols by exchange, symbols with/missing price history, coverage percentage, latest timestamps by exchange and aggregate quality alerts.
+- The existing data-quality dashboard now exposes these coverage and alert details responsively.
+
+### Modified/created endpoints
+
+- `POST /api/v1/securities/import/xlsx`
+- `POST /api/v1/stocks/{symbol}/corporate-actions/import`
+- `GET /api/v1/stocks/{symbol}/corporate-actions`
+- `GET /api/v1/data-quality`
+
+### Verification
+
+- Backend Ruff: PASS.
+- Backend Pytest: PASS — 39 tests.
+- Frontend lint/build: PASS.
+- Alembic clean upgrade/downgrade/re-upgrade through `0010`: PASS on SQLite.
+
+### Real integrations and blockers
+
+- FireAnt's official API documentation advertises OAuth scopes including `companies-read`, `finance-read` and `posts-read`; no access token, proven scopes, entitlement or redistribution agreement was supplied, so data calls remain blocked.
+- HNX publishes official listing pages, but this project does not scrape them without confirmed automated-use and redistribution permission. Operators can load an authorized export via CSV/XLSX.
+- Yahoo remains a delayed development source, not a licensed production feed. Docker/PostgreSQL verification remains blocked on this host.
+
+## Milestones 3–8
+
 Status: **IN PROGRESS**. See `docs/IMPLEMENTATION_STATUS.md` for the truthful capability matrix and external blockers.

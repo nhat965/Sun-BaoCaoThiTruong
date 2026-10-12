@@ -1,8 +1,10 @@
 import asyncio
 import os
 from datetime import UTC, datetime
+from io import BytesIO
 
 import pytest
+from openpyxl import Workbook
 
 os.environ["ADMIN_API_TOKEN"] = "test-admin-token"
 os.environ["READER_API_TOKEN"] = "test-reader-token"
@@ -47,6 +49,56 @@ def test_import_requires_auth_and_role_and_validates_csv():
         )
         assert valid.status_code == 200
         assert valid.json()["inserted"] + valid.json()["updated"] == 1
+
+
+def test_authorized_xlsx_securities_import_endpoint():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["symbol", "name", "exchange", "listing_status"])
+    sheet.append(["V4X", "Doanh nghiệp XLSX", "UPCOM", "active"])
+    content = BytesIO()
+    workbook.save(content)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/securities/import/xlsx",
+            headers={
+                "Authorization": "Bearer test-admin-token",
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "X-Source-Name": "authorized-test-workbook",
+            },
+            content=content.getvalue(),
+        )
+    assert response.status_code == 200
+    assert response.json()["inserted"] + response.json()["updated"] == 1
+
+
+def test_authorized_corporate_actions_preserve_source_and_do_not_adjust_prices():
+    admin = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        security = client.post(
+            "/api/v1/securities/import",
+            headers=admin,
+            content="symbol,name,exchange\nACT,Action Test,HOSE\n",
+        )
+        assert security.status_code == 200
+        imported = client.post(
+            "/api/v1/stocks/ACT/corporate-actions/import",
+            headers=admin | {"X-Source-Name": "authorized-actions-export"},
+            content=(
+                "action_type,effective_at,ratio,cash_amount,verification_status,source_url\n"
+                "stock_split,2026-01-05T00:00:00+07:00,2,,verified,https://example.com/action\n"
+                "cash_dividend,2026-02-05T00:00:00+07:00,,1500,verified,https://example.com/dividend\n"
+            ),
+        )
+        assert imported.status_code == 200
+        assert imported.json()["inserted"] == 2
+        actions = client.get("/api/v1/stocks/ACT/corporate-actions")
+        assert actions.status_code == 200
+        assert {item["action_type"] for item in actions.json()} == {
+            "stock_split",
+            "cash_dividend",
+        }
+        assert all(item["source_name"] == "authorized-actions-export" for item in actions.json())
 
 
 class ControlledConnector(MarketDataConnector):

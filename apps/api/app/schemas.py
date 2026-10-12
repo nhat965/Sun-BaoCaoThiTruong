@@ -124,7 +124,16 @@ class DataQualityReport(BaseModel):
     market_data_mode: Literal["live", "fixture"]
     securities_count: int
     active_securities_count: int
+    exchange_distribution: dict[str, int] = Field(default_factory=dict)
     price_observations_count: int
+    symbols_with_price_history: int = 0
+    symbols_missing_price_history: int = 0
+    price_coverage_percent: float = Field(default=0, ge=0, le=100)
+    missing_price_symbols: list[str] = Field(default_factory=list)
+    price_quality_alerts: dict[str, int] = Field(default_factory=dict)
+    latest_market_timestamp_by_exchange: dict[str, datetime | None] = Field(
+        default_factory=dict
+    )
     last_market_timestamp: datetime | None = None
     last_retrieval_timestamp: datetime | None = None
     sources: list[SourceDiagnostic]
@@ -136,6 +145,26 @@ class SecuritiesImportResult(BaseModel):
     updated: int
     rejected: int
     errors: list[str]
+
+
+class CorporateAction(BaseModel):
+    action_type: Literal[
+        "stock_split", "cash_dividend", "bonus_share", "rights_issue", "other"
+    ]
+    effective_at: datetime
+    ratio: float | None = None
+    cash_amount: float | None = None
+    source_name: str
+    source_url: str | None = None
+    verification_status: Literal["verified", "unverified", "rejected"] = "unverified"
+    retrieved_at: datetime
+
+
+class CorporateActionImportResult(BaseModel):
+    inserted: int
+    updated: int
+    rejected: int
+    errors: list[str] = Field(default_factory=list)
 
 
 class FinancialInputs(BaseModel):

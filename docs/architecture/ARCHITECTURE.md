@@ -23,6 +23,8 @@ All analytical numbers are deterministic. `technical-v2` exposes separate trend,
 
 Financial statements are normalized into periods and statement items before ratios are calculated. The selected period type (`quarter`, `year`, or `ttm`), source and reporting date are returned with metrics. Relative valuation requires explicit user assumptions and labels them; no forecast values are generated implicitly.
 
+The securities registry accepts authorized CSV/XLSX snapshots through the same validation/upsert path. Price persistence attaches deterministic quality flags to each observation; corporate actions are a separate sourced record and never silently mutate historical prices. Data-quality aggregation reports coverage independently from provider availability so a configured connector cannot be mistaken for complete data.
+
 ## Trust boundaries
 
 - Upstream JSON/XML and article text are untrusted data.

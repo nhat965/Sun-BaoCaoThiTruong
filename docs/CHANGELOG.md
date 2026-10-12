@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 — V4.1 M2 data coverage
+
+- Added authorized XLSX securities-master ingestion with provider IDs and batch duplicate detection.
+- Added authorized corporate-action import/read APIs without speculative price adjustment.
+- Added migration `0010` for persisted price-quality flags.
+- Expanded API/UI data-quality coverage by exchange, price-history availability, timestamp and anomaly class.
+
 ## 0.5.0 — V4.1 P0 integrity and concurrency
 
 - Replaced loose AI number scanning with structured, metric-specific claim verification and deterministic narrative rendering.

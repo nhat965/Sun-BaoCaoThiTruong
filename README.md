@@ -69,6 +69,21 @@ curl -X POST http://localhost:8000/api/v1/securities/import \
   -H "Authorization: Bearer $ADMIN_API_TOKEN" \
   -H "Content-Type: text/csv" -H "X-Source-Name: authorized-export" \
   --data-binary @securities.csv
+# XLSX dùng cùng các cột bắt buộc symbol, name, exchange:
+curl -X POST http://localhost:8000/api/v1/securities/import/xlsx \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" \
+  -H "X-Source-Name: authorized-workbook" --data-binary @securities.xlsx
+```
+
+Corporate actions chỉ được lưu từ file được ủy quyền; hệ thống không tự suy đoán điều
+chỉnh giá. CSV dùng `action_type,effective_at,ratio,cash_amount,verification_status,source_url`:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/stocks/HPG/corporate-actions/import \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" -H "Content-Type: text/csv" \
+  -H "X-Source-Name: authorized-actions-export" --data-binary @corporate-actions.csv
+curl http://localhost:8000/api/v1/stocks/HPG/corporate-actions
 ```
 
 Nhập BCTC theo schema CSV đã kiểm tra:

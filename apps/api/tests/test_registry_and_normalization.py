@@ -1,10 +1,20 @@
+import json
+import os
 from datetime import UTC, datetime
+from io import BytesIO
 
 import pytest
+from openpyxl import Workbook
+from sqlalchemy import select
+
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["MARKET_DATA_MODE"] = "fixture"
 
 from app.connectors.base import ConnectorError
+from app.database import PriceObservation, SecurityRecord, SessionLocal, init_db
 from app.normalization import normalize_price_series
-from app.registry import import_securities_csv
+from app.registry import import_securities_csv, import_securities_xlsx
+from app.repositories import PriceRepository, SecuritiesRepository
 from app.schemas import PriceBar, PriceSeries, Provenance, Security
 
 
@@ -53,3 +63,65 @@ BAD,Thiếu sàn,,INVALID,active,BAD.VN
     assert result.inserted == 1
     assert result.rejected == 1
     assert result.errors
+
+
+def test_xlsx_import_supports_provider_ids_and_rejects_batch_duplicates():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["symbol", "name", "exchange", "provider_ids", "listing_status"])
+    sheet.append(["XLS1", "Công ty XLS", "UPCOM", '{"fireant":"fa-1"}', "active"])
+    sheet.append(["XLS1", "Bản trùng", "HNX", "", "active"])
+    content = BytesIO()
+    workbook.save(content)
+
+    result = import_securities_xlsx(content.getvalue(), "authorized-xlsx")
+    assert result.inserted == 1
+    assert result.rejected == 1
+    assert "duplicate symbol" in result.errors[0]
+    with SessionLocal() as session:
+        security = SecuritiesRepository(session).get("XLS1")
+        assert security is not None
+        assert security.exchange == "UPCOM"
+        assert security.provider_ids == {"fireant": "fa-1"}
+
+
+def test_price_quality_flags_are_persisted_and_updated_idempotently():
+    init_db()
+    import_securities_csv("symbol,name,exchange\nQLT,Quality Test,HNX\n", "test")
+    first = PriceBar(
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+        open=10,
+        high=11,
+        low=9,
+        close=10,
+        volume=100,
+    )
+    second = PriceBar(
+        timestamp=datetime(2025, 1, 10, tzinfo=UTC),
+        open=14,
+        high=16,
+        low=13,
+        close=15,
+        volume=0,
+    )
+    price_series = series([first, second]).model_copy(
+        update={"security": Security(symbol="QLT", name="Quality Test", exchange="HNX")}
+    )
+    with SessionLocal() as session:
+        repository = PriceRepository(session)
+        assert repository.upsert_series(price_series) == 2
+        session.commit()
+    with SessionLocal() as session:
+        repository = PriceRepository(session)
+        assert repository.upsert_series(price_series) == 0
+        session.commit()
+        rows = session.scalars(
+            select(PriceObservation)
+            .join(SecurityRecord, PriceObservation.security_id == SecurityRecord.id)
+            .where(SecurityRecord.symbol == "QLT")
+            .order_by(PriceObservation.market_timestamp)
+        ).all()
+        flags = json.loads(rows[-1].quality_flags_json)
+        assert "zero_volume" in flags
+        assert "price_jump_over_20_percent" in flags
+        assert "calendar_gap_over_4_days" in flags

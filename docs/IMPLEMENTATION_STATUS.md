@@ -3,7 +3,7 @@
 | Capability | Status | Evidence / remaining gap |
 |---|---|---|
 | Existing MVP flow | DONE | Search → prices → analysis → chart → news metadata → PDF retained. |
-| Securities master | PARTIAL | Database registry, Vietnamese aliases and authorized CSV import implemented; bundled 13-symbol bootstrap is not full-market coverage. |
+| Securities master | PARTIAL | Database registry, Vietnamese aliases, provider IDs and authorized CSV/XLSX incremental import implemented; bundled bootstrap is not full-market coverage. |
 | Source provenance | DONE | Price records include source, URL, retrieval/market timestamps, freshness, validation and adjustment policy. |
 | OHLCV normalization/storage | DONE | Sort, deduplicate, reject invalid bars and incremental upsert implemented. |
 | Provider orchestration | PARTIAL | Priority/failover loop and process-local circuit breaker implemented; only Yahoo price provider currently operational. |
@@ -29,7 +29,7 @@
 | Milestone | Status | Evidence / remaining gap |
 |---|---|---|
 | M1 Security and reliability | COMPLETE | Structured metric-specific AI claims, tokenized job leases/heartbeats, stale-worker protection, streamed-body limits, authorization and rate-limit regressions pass. Shared rate-limit backend remains for multi-worker deployment. |
-| M2 Reliable Vietnamese financial data | PARTIAL | Authorized securities CSV and Yahoo development connector are traceable. `/api/v1/data-quality` and the dashboard expose registry/price coverage, freshness, source success/failure history and honest fixture/configured/unavailable states. Full-market synchronization and licensed providers are not configured. |
+| M2 Reliable Vietnamese financial data | PARTIAL | Authorized CSV/XLSX registry and corporate-action import, persisted price-quality flags, exchange/history coverage and Yahoo development connector are traceable. Full-market synchronization, official trading calendar and licensed providers are not configured. |
 | M3 Fundamental research and valuation | PARTIAL | Deterministic metrics, consolidated/separate and original/amended statement metadata, multi-period trends, relative valuation and explicit-assumption DCF are implemented. Verified peer/sector datasets and historical multiple bands remain unavailable. |
 | M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline, event storage, deduplication and source/category/time filtering are implemented. More than one genuinely live authorized feed is not configured. |
 | M5 AI analyst and verification | PARTIAL | Typed claims verify metric/value/unit/period/symbol/evidence and forecast support; narrative is rendered only from accepted claims. Typed tool planning and production LLM evaluation remain. |

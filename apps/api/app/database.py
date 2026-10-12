@@ -69,6 +69,7 @@ class PriceObservation(Base):
     adjusted: Mapped[bool] = mapped_column(Boolean, default=False)
     validation_status: Mapped[str] = mapped_column(String(24), default="valid")
     adjustment_policy: Mapped[str] = mapped_column(String(64), default="unadjusted")
+    quality_flags_json: Mapped[str] = mapped_column(Text, default="[]")
 
     security: Mapped[SecurityRecord] = relationship(back_populates="prices")
 

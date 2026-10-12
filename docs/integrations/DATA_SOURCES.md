@@ -10,11 +10,15 @@ Implemented for public RSS metadata. The application stores/returns headline, pu
 
 ## FireAnt
 
-An isolated connector can check the documented `/monitoring/status` endpoint when `FIREANT_ACCESS_TOKEN` is configured. Without a token it reports `unavailable` with a `BLOCKED` message and performs no request. Market-data capabilities remain unimplemented until credentials, scopes, entitlements and redistribution rights are verified by a successful real request.
+The official [FireAnt API documentation](https://api.fireant.vn/) advertises OAuth scopes including `companies-read`, `finance-read` and `posts-read`. The isolated connector can check the documented `/monitoring/status` endpoint when `FIREANT_ACCESS_TOKEN` is configured. Without a token it reports `unavailable` with a `BLOCKED` message and performs no request. A health response alone does not prove any data scope; market-data calls remain disabled until credentials, scopes, entitlements and redistribution rights are verified.
 
 ## Securities master
 
-`app/data/securities_bootstrap.csv` is a visibly sourced, non-comprehensive bootstrap set. Operators can import an authorized CSV through `POST /api/v1/securities/import`; symbol, Vietnamese name/aliases, exchange and provenance are persisted without code changes. No exchange page is scraped implicitly.
+`app/data/securities_bootstrap.csv` is a visibly sourced, non-comprehensive bootstrap set. Operators can import an authorized CSV or XLSX; symbol, Vietnamese name/aliases, exchange, status, provider IDs and provenance are persisted without code changes. HNX provides an [official listing page](https://www.hnx.vn/co-phieu-etfs/chung-khoan-ny.html), but the application does not scrape it without confirmed automated-use and redistribution permission.
+
+## Corporate actions and price quality
+
+Authorized action exports can be stored with source, effective timestamp, ratio/cash amount and verification status. They are not automatically applied to historical prices. Price observations retain explicit adjusted/unadjusted provenance plus flags for zero volume, a jump over 20%, or a calendar gap over four days. The calendar-gap flag is a review signal, not proof of a missing session, because an official exchange holiday calendar is not yet connected.
 
 ## Financial statements
 

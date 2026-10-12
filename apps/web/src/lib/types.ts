@@ -98,7 +98,14 @@ export interface DataQualityReport {
   market_data_mode: "live" | "fixture";
   securities_count: number;
   active_securities_count: number;
+  exchange_distribution: Record<string, number>;
   price_observations_count: number;
+  symbols_with_price_history: number;
+  symbols_missing_price_history: number;
+  price_coverage_percent: number;
+  missing_price_symbols: string[];
+  price_quality_alerts: Record<string, number>;
+  latest_market_timestamp_by_exchange: Record<string, string | null>;
   last_market_timestamp: string | null;
   last_retrieval_timestamp: string | null;
   sources: {

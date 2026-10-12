@@ -23,6 +23,7 @@ from app.automation import (
 from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError
 from app.connectors.fireant import FireAntConnector
+from app.corporate_actions import import_corporate_actions, list_corporate_actions
 from app.database import (
     JobRecord,
     PriceObservation,
@@ -33,7 +34,7 @@ from app.database import (
     init_db,
 )
 from app.middleware import RequestBodyLimitMiddleware
-from app.registry import import_securities_csv, seed_registry_if_empty
+from app.registry import import_securities_csv, import_securities_xlsx, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
 from app.schemas import (
@@ -41,6 +42,8 @@ from app.schemas import (
     AnalysisResponse,
     AnalystRequest,
     AnalystResponse,
+    CorporateAction,
+    CorporateActionImportResult,
     DataQualityReport,
     DCFRequest,
     FinancialInputs,
@@ -165,18 +168,59 @@ async def source_status(config: Settings = Depends(get_settings)) -> list[Source
 def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
     """Expose persisted source health and coverage without implying live connectivity."""
     with SessionLocal() as session:
-        securities_count = session.scalar(select(func.count(SecurityRecord.id))) or 0
-        active_securities_count = (
-            session.scalar(
-                select(func.count(SecurityRecord.id)).where(
-                    SecurityRecord.listing_status == "active"
-                )
+        securities = list(session.scalars(select(SecurityRecord)).all())
+        active_securities = [row for row in securities if row.listing_status == "active"]
+        securities_count = len(securities)
+        active_securities_count = len(active_securities)
+        exchange_distribution = {
+            exchange: count
+            for exchange, count in session.execute(
+                select(SecurityRecord.exchange, func.count(SecurityRecord.id))
+                .where(SecurityRecord.listing_status == "active")
+                .group_by(SecurityRecord.exchange)
             )
-            or 0
+        }
+        security_ids_with_prices = set(
+            session.scalars(select(PriceObservation.security_id).distinct()).all()
+        )
+        active_with_prices = [
+            row for row in active_securities if row.id in security_ids_with_prices
+        ]
+        missing_price_symbols = sorted(
+            row.symbol for row in active_securities if row.id not in security_ids_with_prices
         )
         price_observations_count = session.scalar(select(func.count(PriceObservation.id))) or 0
         last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
         last_retrieval_timestamp = session.scalar(select(func.max(PriceObservation.ingested_at)))
+        latest_market_timestamp_by_exchange = {
+            exchange: timestamp
+            for exchange, timestamp in session.execute(
+                select(SecurityRecord.exchange, func.max(PriceObservation.market_timestamp))
+                .join(PriceObservation, PriceObservation.security_id == SecurityRecord.id)
+                .group_by(SecurityRecord.exchange)
+            )
+        }
+        price_quality_alerts = {
+            flag: session.scalar(
+                select(func.count(PriceObservation.id)).where(
+                    PriceObservation.quality_flags_json.contains(flag)
+                )
+            )
+            or 0
+            for flag in (
+                "zero_volume",
+                "price_jump_over_20_percent",
+                "calendar_gap_over_4_days",
+            )
+        }
+        price_quality_alerts["unvalidated_observation"] = (
+            session.scalar(
+                select(func.count(PriceObservation.id)).where(
+                    PriceObservation.validation_status != "valid"
+                )
+            )
+            or 0
+        )
         health = {
             row.source_name: row for row in session.scalars(select(SourceHealthRecord)).all()
         }
@@ -200,6 +244,18 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         issues.append("Đang dùng fixture tổng hợp; mọi số giá chỉ phục vụ kiểm thử.")
     if not price_observations_count:
         issues.append("Chưa có quan sát giá nào được lưu trong cơ sở dữ liệu.")
+    if missing_price_symbols:
+        issues.append(
+            f"{len(missing_price_symbols)} mã đang hoạt động chưa có lịch sử giá được lưu."
+        )
+    if price_quality_alerts["price_jump_over_20_percent"]:
+        issues.append(
+            "Có biến động giá trên 20%; cần đối chiếu corporate action và nguồn gốc trước khi dùng."
+        )
+    if price_quality_alerts["calendar_gap_over_4_days"]:
+        issues.append(
+            "Có khoảng trống lịch trên 4 ngày; đây là cảnh báo sơ bộ vì chưa có lịch nghỉ HOSE/HNX/UPCoM chính thức."
+        )
     if any(item.availability == "configured" and item.last_success_at is None for item in diagnostics):
         issues.append("Có nguồn đã cấu hình nhưng chưa có lần truy xuất thành công được xác minh.")
     if active_securities_count < 100:
@@ -210,7 +266,18 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         market_data_mode="fixture" if config.market_data_mode == "fixture" else "live",
         securities_count=securities_count,
         active_securities_count=active_securities_count,
+        exchange_distribution=exchange_distribution,
         price_observations_count=price_observations_count,
+        symbols_with_price_history=len(active_with_prices),
+        symbols_missing_price_history=len(missing_price_symbols),
+        price_coverage_percent=round(
+            len(active_with_prices) / active_securities_count * 100, 2
+        )
+        if active_securities_count
+        else 0,
+        missing_price_symbols=missing_price_symbols[:50],
+        price_quality_alerts=price_quality_alerts,
+        latest_market_timestamp_by_exchange=latest_market_timestamp_by_exchange,
         last_market_timestamp=last_market_timestamp,
         last_retrieval_timestamp=last_retrieval_timestamp,
         sources=diagnostics,
@@ -261,6 +328,53 @@ def import_securities(
     result = import_securities_csv(csv_content, source_name[:128])
     audit_success(request, principal, result)
     return result
+
+
+@app.post("/api/v1/securities/import/xlsx", response_model=SecuritiesImportResult)
+def import_securities_workbook(
+    request: Request,
+    workbook: bytes = Body(media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    source_name: str = Header(default="user-authorized-import", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+):
+    """Incrementally import an authorized XLSX securities registry."""
+    if len(workbook) > 2_000_000:
+        raise HTTPException(status_code=413, detail="XLSX is too large.")
+    try:
+        result = import_securities_xlsx(workbook, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="securities.import.xlsx")
+    return result
+
+
+@app.post(
+    "/api/v1/stocks/{symbol}/corporate-actions/import",
+    response_model=CorporateActionImportResult,
+)
+def corporate_actions_import(
+    symbol: str,
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="user-authorized-corporate-actions", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+):
+    if len(csv_content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        result = import_corporate_actions(symbol, csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="corporate_actions.import")
+    return result
+
+
+@app.get("/api/v1/stocks/{symbol}/corporate-actions", response_model=list[CorporateAction])
+def corporate_actions(symbol: str):
+    try:
+        return list_corporate_actions(symbol)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/fundamentals/calculate", response_model=FinancialMetricResult)

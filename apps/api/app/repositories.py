@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -119,7 +119,16 @@ class PriceRepository:
         if security_row is None:
             raise ValueError("Security must exist before storing prices")
         inserted = 0
+        previous = None
         for bar in series.bars:
+            quality_flags = []
+            if bar.volume == 0:
+                quality_flags.append("zero_volume")
+            if previous is not None:
+                if abs(bar.close / previous.close - 1) > 0.2:
+                    quality_flags.append("price_jump_over_20_percent")
+                if (bar.timestamp.date() - previous.timestamp.date()).days > 4:
+                    quality_flags.append("calendar_gap_over_4_days")
             values = {
                 "security_id": security_row.id,
                 "provider": series.provenance.source,
@@ -136,28 +145,48 @@ class PriceRepository:
                 "adjusted": series.adjusted,
                 "validation_status": series.provenance.validation_status,
                 "adjustment_policy": series.provenance.adjustment_policy,
+                "quality_flags_json": json.dumps(quality_flags),
             }
+            exists = self.session.scalar(
+                select(PriceObservation.id).where(
+                    PriceObservation.security_id == security_row.id,
+                    PriceObservation.provider == series.provenance.source,
+                    PriceObservation.market_timestamp == bar.timestamp,
+                    PriceObservation.interval == series.interval,
+                )
+            )
             if self.session.bind and self.session.bind.dialect.name == "sqlite":
                 statement = (
                     sqlite_insert(PriceObservation)
                     .values(**values)
-                    .on_conflict_do_nothing(
-                        index_elements=["security_id", "provider", "market_timestamp", "interval"]
+                    .on_conflict_do_update(
+                        index_elements=[
+                            "security_id",
+                            "provider",
+                            "market_timestamp",
+                            "interval",
+                        ],
+                        set_={
+                            "ingested_at": series.provenance.retrieved_at,
+                            "validation_status": series.provenance.validation_status,
+                            "adjustment_policy": series.provenance.adjustment_policy,
+                            "quality_flags_json": json.dumps(quality_flags),
+                        },
                     )
                 )
-                inserted += int((self.session.execute(statement).rowcount or 0) > 0)
+                self.session.execute(statement)
+                inserted += int(exists is None)
             else:
-                exists = self.session.scalar(
-                    select(PriceObservation.id).where(
-                        PriceObservation.security_id == security_row.id,
-                        PriceObservation.provider == series.provenance.source,
-                        PriceObservation.market_timestamp == bar.timestamp,
-                        PriceObservation.interval == series.interval,
-                    )
-                )
                 if exists is None:
                     self.session.add(PriceObservation(**values))
                     inserted += 1
+                else:
+                    self.session.execute(
+                        update(PriceObservation)
+                        .where(PriceObservation.id == exists)
+                        .values(**values)
+                    )
+            previous = bar
         self.session.flush()
         return inserted
 

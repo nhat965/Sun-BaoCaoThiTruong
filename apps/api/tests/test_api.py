@@ -36,6 +36,10 @@ def test_health_and_hpg_flow():
         quality_payload = quality.json()
         assert quality_payload["market_data_mode"] == "fixture"
         assert quality_payload["price_observations_count"] >= 30
+        assert quality_payload["exchange_distribution"]["HOSE"] >= 1
+        assert quality_payload["symbols_with_price_history"] >= 1
+        assert quality_payload["price_coverage_percent"] > 0
+        assert "price_jump_over_20_percent" in quality_payload["price_quality_alerts"]
         fixture = next(
             source
             for source in quality_payload["sources"]

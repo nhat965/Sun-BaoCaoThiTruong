@@ -7,15 +7,15 @@ Date: 2026-10-12 (Asia/Bangkok)
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 35 tests |
+| Backend `pytest -q` | PASS — 39 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0009` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0010` | PASS — temporary SQLite database |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
 | Impeccable UI detector | PASS — no findings in changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
 
-Backend coverage exercises API happy/error paths, admin 401/403/422 protection, calculation-only versus persisted valuation authorization, audit writes, concurrent tokenized leases and stale-worker rejection, streamed body limits without `Content-Length`, AI rate limiting, persistent circuit-breaker recovery, source-quality diagnostics, normalization rejection and deduplication, unaccented registry search, scoped/amended financial CSV ingestion, multi-period trends, deterministic relative/DCF valuation, news filters/event/relevance/deduplication, metric-specific claim rejection, technical edge cases including flat MFI and PDF creation. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
 
 ## Live smoke test
 
