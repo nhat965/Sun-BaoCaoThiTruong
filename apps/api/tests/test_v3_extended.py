@@ -5,11 +5,12 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import delete, select
 
+from app.analyst import verify_generated_answer
 from app.automation import AutomationService
 from app.config import Settings
 from app.connectors.news import classify_event, group_hash, relevance
 from app.database import JobRecord, JobRunRecord, SessionLocal, init_db
-from app.schemas import Security
+from app.schemas import EvidenceRecord, Security
 
 
 def test_news_pipeline_classifies_and_deduplicates_group():
@@ -57,3 +58,19 @@ def test_concurrent_job_claim_executes_once():
 def test_production_settings_fail_closed_without_strong_admin_secret():
     with pytest.raises(ValueError):
         Settings(app_environment="production", admin_api_token="short")
+
+
+def test_ai_claim_verifier_rejects_unknown_citations_and_numbers():
+    evidence = [
+        EvidenceRecord(
+            evidence_id="E001",
+            kind="fact",
+            statement="Giá quan sát 25.000 VND.",
+            source="test-source",
+        )
+    ]
+    tools = {"get_stock_prices": {"latest_price": 25000, "change_percent": 1.5}}
+    assert verify_generated_answer("Giá là 25000 VND [E001].", evidence, tools) == []
+    errors = verify_generated_answer("Giá mục tiêu 40000 VND [E999].", evidence, tools)
+    assert any("Citation không tồn tại" in error for error in errors)
+    assert any("Số liệu không có" in error for error in errors)

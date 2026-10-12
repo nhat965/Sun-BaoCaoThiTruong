@@ -1,5 +1,8 @@
+import pytest
+
 from app.analytics.fundamental import calculate_financial_metrics, growth
-from app.schemas import FinancialInputs
+from app.analytics.valuation import calculate_dcf_valuation
+from app.schemas import DCFRequest, FinancialInputs
 
 
 def test_growth_and_core_ratios():
@@ -35,3 +38,19 @@ def test_negative_earnings_make_pe_unavailable():
     )
     assert result.metrics["pe"] is None
     assert any("Lợi nhuận âm" in warning for warning in result.warnings)
+
+
+def test_dcf_uses_explicit_cash_flows_and_terminal_assumptions():
+    result = calculate_dcf_valuation(
+        DCFRequest(
+            symbol="HPG",
+            forecast_free_cash_flows=[100, 110],
+            discount_rate=0.1,
+            terminal_growth_rate=0.03,
+            net_debt=50,
+            shares_outstanding=10,
+        )
+    )
+    assert result.method == "dcf-fcf"
+    assert result.scenarios["base"] == pytest.approx(146.9481, abs=0.0001)
+    assert result.assumptions["assumption_source"] == "user-assumption"

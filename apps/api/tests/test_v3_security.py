@@ -129,15 +129,16 @@ def test_financial_statement_csv_pipeline_and_relative_valuation():
             content="symbol,name,exchange\nV3B,Beta,HOSE\n",
         )
         assert security.status_code == 200
-        content = """period_end,period_type,fiscal_year,statement_type,item_code,value,verification_status
-2023-12-31T00:00:00+00:00,year,2023,income,revenue,100,verified
-2023-12-31T00:00:00+00:00,year,2023,income,net_income,10,verified
-2023-12-31T00:00:00+00:00,year,2023,balance,total_assets,100,verified
-2023-12-31T00:00:00+00:00,year,2023,balance,total_equity,50,verified
-2024-12-31T00:00:00+00:00,year,2024,income,revenue,120,verified
-2024-12-31T00:00:00+00:00,year,2024,income,net_income,15,verified
-2024-12-31T00:00:00+00:00,year,2024,balance,total_assets,110,verified
-2024-12-31T00:00:00+00:00,year,2024,balance,total_equity,55,verified
+        content = """period_end,period_type,fiscal_year,statement_type,item_code,value,verification_status,statement_scope,statement_status
+2023-12-31T00:00:00+00:00,year,2023,income,revenue,100,verified,consolidated,original
+2023-12-31T00:00:00+00:00,year,2023,income,net_income,10,verified,consolidated,original
+2023-12-31T00:00:00+00:00,year,2023,balance,total_assets,100,verified,consolidated,original
+2023-12-31T00:00:00+00:00,year,2023,balance,total_equity,50,verified,consolidated,original
+2024-12-31T00:00:00+00:00,year,2024,income,revenue,120,verified,consolidated,amended
+2024-12-31T00:00:00+00:00,year,2024,income,net_income,15,verified,consolidated,amended
+2024-12-31T00:00:00+00:00,year,2024,balance,total_assets,110,verified,consolidated,amended
+2024-12-31T00:00:00+00:00,year,2024,balance,total_equity,55,verified,consolidated,amended
+2024-12-31T00:00:00+00:00,year,2024,income,revenue,80,verified,separate,original
 """
         imported = client.post(
             "/api/v1/stocks/V3B/financials/import",
@@ -145,16 +146,47 @@ def test_financial_statement_csv_pipeline_and_relative_valuation():
             content=content,
         )
         assert imported.status_code == 200
-        assert imported.json()["inserted_periods"] == 2
+        assert imported.json()["inserted_periods"] == 3
         fundamentals = client.get("/api/v1/stocks/V3B/fundamentals")
         assert fundamentals.status_code == 200
         assert fundamentals.json()["metrics"]["revenue_growth_percent"] == 20
+        assert fundamentals.json()["statement_scope"] == "consolidated"
+        assert fundamentals.json()["statement_status"] == "amended"
+        history = client.get("/api/v1/stocks/V3B/fundamentals/history")
+        assert history.status_code == 200
+        assert len(history.json()["periods"]) == 2
+        assert history.json()["periods"][1]["metrics"]["revenue_growth_percent"] == 20
+        assert history.json()["warnings"]
         valuation = client.post(
             "/api/v1/fundamentals/valuation",
             json={"symbol": "V3B", "eps": 3, "bvps": 11, "pe_multiple": 10, "pb_multiple": 1.5},
         )
         assert valuation.status_code == 200
         assert valuation.json()["scenarios"]["base"] == 23.25
+        dcf = client.post(
+            "/api/v1/fundamentals/valuation/dcf",
+            json={
+                "symbol": "V3B",
+                "forecast_free_cash_flows": [100, 110],
+                "discount_rate": 0.1,
+                "terminal_growth_rate": 0.03,
+                "net_debt": 50,
+                "shares_outstanding": 10,
+            },
+        )
+        assert dcf.status_code == 200
+        assert dcf.json()["method"] == "dcf-fcf"
+        invalid_dcf = client.post(
+            "/api/v1/fundamentals/valuation/dcf",
+            json={
+                "symbol": "V3B",
+                "forecast_free_cash_flows": [100],
+                "discount_rate": 0.03,
+                "terminal_growth_rate": 0.03,
+                "shares_outstanding": 10,
+            },
+        )
+        assert invalid_dcf.status_code == 422
 
         blocked_persist = client.post(
             "/api/v1/fundamentals/valuation/persist",

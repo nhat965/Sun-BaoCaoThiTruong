@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2 — V4 M3–M5 research integrity slices
+
+- Added consolidated/separate and original/amended BCTC metadata with migration `0008`.
+- Added multi-period fundamental history API and responsive financial trend table.
+- Added a deterministic public DCF calculator with explicit user assumptions and bull/base/bear scenarios.
+- Added news source, event-category and publication-time filters in API and dashboard.
+- Added evidence IDs plus post-generation citation/numeric verification for optional LLM answers.
+- Expanded the backend suite to 24 tests.
+
 ## 0.4.1 — V4 M2 data-quality vertical slice
 
 - Added `/api/v1/data-quality` with securities/price coverage, freshness and explicit source limitations.

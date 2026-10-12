@@ -11,7 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analyst import AnalystService
 from app.analytics.fundamental import calculate_financial_metrics
-from app.analytics.valuation import calculate_relative_valuation
+from app.analytics.valuation import calculate_dcf_valuation, calculate_relative_valuation
 from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
 from app.automation import (
     AutomationService,
@@ -41,9 +41,11 @@ from app.schemas import (
     AnalystRequest,
     AnalystResponse,
     DataQualityReport,
+    DCFRequest,
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    FinancialTrendResponse,
     JobRequest,
     JobResult,
     PriceSeries,
@@ -311,6 +313,25 @@ def fundamentals(symbol: str) -> FinancialMetricResult:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@app.get("/api/v1/stocks/{symbol}/fundamentals/history", response_model=FinancialTrendResponse)
+def fundamentals_history(
+    symbol: str,
+    period_type: str = Query("year", pattern="^(quarter|year|ttm)$"),
+    statement_scope: str = Query("consolidated", pattern="^(consolidated|separate)$"),
+    limit: int = Query(8, ge=1, le=20),
+) -> FinancialTrendResponse:
+    try:
+        with SessionLocal() as session:
+            return FinancialRepository(session).history(
+                symbol,
+                period_type=period_type,
+                statement_scope=statement_scope,
+                limit=limit,
+            )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
     result = calculate_relative_valuation(inputs)
     return result
@@ -320,6 +341,12 @@ def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
 def valuation(inputs: ValuationRequest) -> ValuationResult:
     """Public calculation only; it never writes shared state."""
     return _calculate_valuation(inputs)
+
+
+@app.post("/api/v1/fundamentals/valuation/dcf", response_model=ValuationResult)
+def dcf_valuation(inputs: DCFRequest) -> ValuationResult:
+    """Public deterministic DCF calculation; assumptions are explicit and never persisted."""
+    return calculate_dcf_valuation(inputs)
 
 
 @app.post("/api/v1/fundamentals/valuation/persist", response_model=ValuationResult)
@@ -373,16 +400,49 @@ async def technicals(symbol: str, svc: AnalysisService = Depends(service)):
 
 
 @app.get("/api/v1/stocks/{symbol}/news")
-async def news(symbol: str, svc: AnalysisService = Depends(service)):
+async def news(
+    symbol: str,
+    limit: int = Query(20, ge=1, le=100),
+    source: str | None = Query(None, max_length=128),
+    event_category: str | None = Query(None, max_length=32),
+    published_from: datetime | None = None,
+    published_to: datetime | None = None,
+    svc: AnalysisService = Depends(service),
+):
+    if published_from and published_to and published_from > published_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="published_from must be before published_to",
+        )
     with SessionLocal() as session:
-        cached = NewsRepository(session).list(symbol)
+        cached = NewsRepository(session).list(
+            symbol,
+            limit,
+            source=source,
+            event_category=event_category,
+            published_from=published_from,
+            published_to=published_to,
+        )
     if cached:
         return {"items": cached, "coverage_note": "Metadata RSS đã chuẩn hóa/lưu trữ; có thể không đầy đủ."}
     with SessionLocal() as session:
         security = SecuritiesRepository(session).get(symbol)
     if security is None:
         raise HTTPException(404, detail={"code": "symbol_not_found", "message": "Mã chưa được hỗ trợ."})
-    return {"items": await svc.related_news(security), "coverage_note": "Metadata RSS; không tải toàn văn bài viết."}
+    await svc.related_news(security, limit=100)
+    with SessionLocal() as session:
+        filtered = NewsRepository(session).list(
+            symbol,
+            limit,
+            source=source,
+            event_category=event_category,
+            published_from=published_from,
+            published_to=published_to,
+        )
+    return {
+        "items": filtered,
+        "coverage_note": "Metadata RSS đã chuẩn hóa/lưu trữ; có thể không đầy đủ.",
+    }
 
 
 @app.post("/api/v1/analyst/chat", response_model=AnalystResponse)

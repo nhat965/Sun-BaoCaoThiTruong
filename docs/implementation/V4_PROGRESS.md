@@ -16,5 +16,7 @@ Remaining production gap: process-local rate limits need Redis or another shared
 ## Next milestones
 
 - M2: **PARTIAL** — provider capability/quality API and dashboard are implemented with persisted success/failure timestamps, coverage counts, freshness and explicit fixture/configured/unavailable states. Clean migration `0007` and browser QA passed. Authorized full-market securities synchronization and a licensed market feed remain.
-- M3: financial trend dashboard, statement scope metadata and transparent valuation history/peer inputs.
+- M3: **PARTIAL** — statement scope/amendment metadata, multi-period financial trends and explicit-assumption DCF are implemented in migration `0008`, API and dashboard. Licensed peer/sector/history inputs remain.
+- M4: **PARTIAL** — stored news supports bounded source, event-category and publication-time filters; UI filters operate on retrieved metadata. A second verified authorized live feed remains unavailable.
+- M5: **PARTIAL** — evidence IDs plus numeric/citation verification reject unsupported LLM output and fall back to deterministic analysis. Production provider evaluation remains credential-dependent.
 - M4–M8: only where authorized data or infrastructure is available; otherwise retain explicit BLOCKED/PARTIAL status.

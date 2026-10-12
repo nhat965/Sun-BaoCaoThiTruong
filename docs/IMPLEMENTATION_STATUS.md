@@ -30,9 +30,9 @@
 |---|---|---|
 | M1 Security and reliability | COMPLETE | Protected valuation persistence, atomic job claiming/retry recovery, request/LLM limits, production config validation; 21 backend tests pass. Shared rate-limit backend remains for multi-worker deployment. |
 | M2 Reliable Vietnamese financial data | PARTIAL | Authorized securities CSV and Yahoo development connector are traceable. `/api/v1/data-quality` and the dashboard expose registry/price coverage, freshness, source success/failure history and honest fixture/configured/unavailable states. Full-market synchronization and licensed providers are not configured. |
-| M3 Fundamental research and valuation | PARTIAL | Deterministic stored-period metrics and relative valuation exist; trends, peers, historical bands and DCF remain. |
-| M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline and event storage exist; more than one genuinely live authorized feed is not configured. |
-| M5 AI analyst and verification | PARTIAL | Typed evidence response, optional provider, limits and audit exist; numeric claim/citation validation remains. |
+| M3 Fundamental research and valuation | PARTIAL | Deterministic metrics, consolidated/separate and original/amended statement metadata, multi-period trends, relative valuation and explicit-assumption DCF are implemented. Verified peer/sector datasets and historical multiple bands remain unavailable. |
+| M4 News and event intelligence | PARTIAL | Configurable RSS metadata pipeline, event storage, deduplication and source/category/time filtering are implemented. More than one genuinely live authorized feed is not configured. |
+| M5 AI analyst and verification | PARTIAL | Typed evidence IDs, optional provider, limits, audit and post-generation numeric/citation verification are implemented; unsupported output falls back deterministically. Broader date/event semantic validation and production LLM evaluation remain. |
 | M6 Social sentiment | NOT STARTED | No authorized discussion dataset supplied. |
 | M7 Daily reporting | PARTIAL | Persistent jobs and report endpoint exist; production scheduler, trading calendar and delivery channels remain. |
 | M8 Portfolio/VPS | NOT STARTED | Manual portfolio workflows are not implemented; VPS remains blocked pending official API. |

@@ -50,6 +50,8 @@ Sao chép `.env.example` thành `.env`. Mặc định local dùng SQLite; Compos
 
 ```bash
 curl http://localhost:8000/api/v1/stocks/HPG/analysis
+curl "http://localhost:8000/api/v1/stocks/HPG/fundamentals/history?period_type=year&statement_scope=consolidated"
+curl "http://localhost:8000/api/v1/stocks/HPG/news?event_category=earnings&limit=20"
 curl -X POST http://localhost:8000/api/v1/stocks/HPG/reports --output HPG-report.pdf
 curl http://localhost:8000/api/v1/data-quality
 ```
@@ -78,6 +80,10 @@ curl -X POST http://localhost:8000/api/v1/analyst/chat -H "Content-Type: applica
 curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/persist \
   -H "Authorization: Bearer $ADMIN_API_TOKEN" -H "Content-Type: application/json" \
   -d '{"symbol":"HPG","eps":2,"bvps":10,"pe_multiple":10,"pb_multiple":2}'
+# DCF công khai chỉ tính toán, không lưu; mọi dự báo đều do người dùng cung cấp:
+curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/dcf \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"HPG","forecast_free_cash_flows":[100,110],"discount_rate":0.1,"terminal_growth_rate":0.03,"net_debt":50,"shares_outstanding":10}'
 ```
 
 Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc và giao diện hiển thị trạng thái thiếu dữ liệu. Chỉ bật `MARKET_DATA_MODE=fixture` cho demo/test; dữ liệu sẽ được dán nhãn `fixture` rõ ràng.
