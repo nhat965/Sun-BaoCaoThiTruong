@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — V4.1 P0 integrity and concurrency
+
+- Replaced loose AI number scanning with structured, metric-specific claim verification and deterministic narrative rendering.
+- Added tokenized job ownership, exact run IDs, leases, heartbeats and stale-worker overwrite protection in migration `0009`.
+- Enforced actual streamed request-body limits and added reverse-proxy guidance.
+- Added claim identity/unit/period/forecast, concurrent recovery, chunked-body and AI rate-limit regression tests.
+
 ## 0.4.2 — V4 M3–M5 research integrity slices
 
 - Added consolidated/separate and original/amended BCTC metadata with migration `0008`.

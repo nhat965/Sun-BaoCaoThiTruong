@@ -32,6 +32,7 @@ from app.database import (
     ValuationResultRecord,
     init_db,
 )
+from app.middleware import RequestBodyLimitMiddleware
 from app.registry import import_securities_csv, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
@@ -85,16 +86,7 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def request_size_limit(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > settings.max_request_bytes:
-        return StreamingResponse(
-            iter([b'{"detail":"Request body is too large."}']),
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            media_type="application/json",
-        )
-    return await call_next(request)
+app.add_middleware(RequestBodyLimitMiddleware, max_bytes=settings.max_request_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -460,7 +452,11 @@ async def analyst_chat(
 
 @app.post("/api/v1/jobs/eod/{symbol}", response_model=JobResult)
 async def enqueue_eod(symbol: str, payload: JobRequest | None = None, request: Request = None, principal: Principal = Depends(require_admin)):
-    job = AutomationService(AnalysisService(settings), settings.automation_max_retries).enqueue_eod(symbol, payload.scheduled_for if payload else None)
+    job = AutomationService(
+        AnalysisService(settings),
+        settings.automation_max_retries,
+        settings.automation_lease_seconds,
+    ).enqueue_eod(symbol, payload.scheduled_for if payload else None)
     if request is not None: audit_success(request, principal, {"job_id": job.id}, action="jobs.enqueue")
     return job_schema(job)
 
@@ -473,7 +469,11 @@ def list_jobs(principal: Principal = Depends(require_admin)):
 
 @app.post("/api/v1/jobs/{job_id}/run", response_model=JobResult)
 async def run_job(job_id: int, principal: Principal = Depends(require_admin)):
-    job = await AutomationService(AnalysisService(settings), settings.automation_max_retries).run(job_id)
+    job = await AutomationService(
+        AnalysisService(settings),
+        settings.automation_max_retries,
+        settings.automation_lease_seconds,
+    ).run(job_id)
     return job_schema(job)
 
 

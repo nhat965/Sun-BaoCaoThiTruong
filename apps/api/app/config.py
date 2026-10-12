@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     analyst_timeout_seconds: float = 20
     llm_rate_limit_per_minute: int = 10
     automation_max_retries: int = 3
+    automation_lease_seconds: int = 1800
     max_request_bytes: int = 5_000_000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

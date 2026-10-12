@@ -46,6 +46,11 @@ npm run dev
 
 Sao chép `.env.example` thành `.env`. Mặc định local dùng SQLite; Compose dùng PostgreSQL. Lệnh `adopt_legacy_database.py` chỉ cần cho database MVP cũ chưa có version; nó kiểm tra cấu trúc trước khi stamp và không xóa dữ liệu.
 
+`MAX_REQUEST_BYTES` giới hạn số byte thực tế mà API chấp nhận, kể cả request
+stream/chunked không có `Content-Length`. Khi triển khai sau reverse proxy, đặt giới hạn
+proxy bằng hoặc thấp hơn giá trị này (ví dụ Nginx `client_max_body_size 5m;`) và tắt
+request buffering chỉ khi hạ tầng đã được kiểm thử với giới hạn tương đương.
+
 ## Phân tích HPG và tạo báo cáo
 
 ```bash

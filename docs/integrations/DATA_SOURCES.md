@@ -29,3 +29,7 @@ V4 source rule: a feed is operational only after a real request succeeds. `NEWS_
 ## Data-quality diagnostics
 
 `GET /api/v1/data-quality` reports securities coverage, stored price-observation coverage, latest market/retrieval timestamps, and connector health. Migration `0007` retains each connector's latest successful and failed check independently, plus consecutive failures. The web dashboard presents `fixture`, `configured`, `available` and `unavailable` distinctly; configured sources without a verified successful request are not described as live.
+
+## AI evidence boundary
+
+External LLM responses are proposals, not a data source. A proposed financial claim is accepted only when its evidence ID resolves to the same security, metric, period and compatible unit/value. Forecasts additionally require evidence explicitly classified as a forecast. The application renders its own narrative from accepted claims and records rejected-claim limitations.

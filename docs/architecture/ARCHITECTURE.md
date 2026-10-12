@@ -32,4 +32,6 @@ Financial statements are normalized into periods and statement items before rati
 
 ## V4 hardening
 
-State-changing routes are admin-protected, while public valuation is calculation-only. Persistent valuation uses a separate admin route. Jobs use database compare-and-set claims so multiple workers cannot execute one queued job twice. The analyst is an optional provider adapter over deterministic internal tools and never owns financial calculations.
+State-changing routes are admin-protected, while public valuation is calculation-only. Persistent valuation uses a separate admin route. Jobs use database compare-and-set claims plus a token, exact run ID and expiring lease. Completion and heartbeat updates match the current owner and unexpired lease, so a reclaimed job cannot be overwritten by its previous worker.
+
+The analyst provider returns typed proposed claims rather than publishable prose. `ClaimVerificationService` validates the referenced evidence, symbol, metric identity, period, unit dimension/value and forecast support. The final Vietnamese narrative is rendered deterministically from accepted claims; rejected statements never reach the answer as confirmed facts.

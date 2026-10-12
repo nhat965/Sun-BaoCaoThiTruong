@@ -263,6 +263,12 @@ class JobRecord(Base):
     last_error: Mapped[str | None] = mapped_column(String(1024))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class JobRunRecord(Base):
@@ -275,6 +281,11 @@ class JobRunRecord(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(1024))
     result_json: Mapped[str] = mapped_column(Text, default="{}")
+    run_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class WatchlistRecord(Base):

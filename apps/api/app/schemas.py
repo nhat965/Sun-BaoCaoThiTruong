@@ -250,6 +250,75 @@ class EvidenceRecord(BaseModel):
     retrieved_at: datetime | None = None
     market_timestamp: datetime | None = None
     confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+    symbol: str | None = None
+    metric_key: str | None = None
+    value: float | None = None
+    unit: Literal[
+        "vnd",
+        "thousand_vnd",
+        "million_vnd",
+        "billion_vnd",
+        "percent",
+        "ratio",
+        "count",
+        "text",
+    ] | None = None
+    period: str | None = None
+
+
+class FinancialClaim(BaseModel):
+    """Machine-verifiable contract returned by an analyst model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str = Field(pattern="^C[0-9]{3,}$")
+    claim_type: Literal[
+        "fact", "financial_metric", "calculation", "interpretation", "forecast"
+    ]
+    symbol: str = Field(min_length=1, max_length=16)
+    metric_key: str = Field(min_length=1, max_length=64)
+    value: float | None = None
+    unit: Literal[
+        "vnd",
+        "thousand_vnd",
+        "million_vnd",
+        "billion_vnd",
+        "percent",
+        "ratio",
+        "count",
+        "text",
+    ]
+    period: str = Field(min_length=1, max_length=64)
+    evidence_ids: list[str] = Field(min_length=1, max_length=10)
+    interpretation: str = Field(min_length=1, max_length=500)
+    confidence: Literal["high", "medium", "low"] = "medium"
+    limitations: list[str] = Field(default_factory=list, max_length=10)
+
+
+class StructuredClaimResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claims: list[FinancialClaim] = Field(default_factory=list, max_length=25)
+
+
+class ClaimValidationError(BaseModel):
+    claim_id: str
+    code: Literal[
+        "unknown_evidence",
+        "symbol_mismatch",
+        "metric_mismatch",
+        "period_mismatch",
+        "unit_mismatch",
+        "value_mismatch",
+        "missing_value",
+        "unsupported_forecast",
+    ]
+    message: str
+
+
+class ClaimVerificationResult(BaseModel):
+    accepted: list[FinancialClaim] = Field(default_factory=list)
+    rejected: list[ClaimValidationError] = Field(default_factory=list)
 
 
 class AnalystResponse(BaseModel):
