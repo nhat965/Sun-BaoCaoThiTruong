@@ -204,6 +204,8 @@ def mfi(bars: list[PriceBar], period: int = 14) -> float | None:
             (flow if typical > previous_typical else 0, flow if typical < previous_typical else 0)
         )
     positive, negative = sum(item[0] for item in flows), sum(item[1] for item in flows)
+    if positive == 0 and negative == 0:
+        return 50.0
     if negative == 0:
         return 100.0
     return 100 - 100 / (1 + positive / negative)

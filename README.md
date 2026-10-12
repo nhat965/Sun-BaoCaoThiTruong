@@ -1,4 +1,4 @@
-# Mạch Thị Trường — AI Market Intelligence V2
+# Mạch Thị Trường — AI Market Intelligence V3
 
 Ứng dụng nghiên cứu cổ phiếu Việt Nam với luồng hoàn chỉnh: tìm theo mã/tên → lấy và kiểm định OHLCV có nguồn → tính chỉ báo kỹ thuật → hiển thị biểu đồ → tổng hợp metadata tin liên quan → xuất báo cáo PDF.
 
@@ -58,8 +58,19 @@ Tìm kiếm không dấu và nhập danh mục chứng khoán từ nguồn đư�
 ```bash
 curl "http://localhost:8000/api/v1/stocks/search?q=hoa%20phat"
 curl -X POST http://localhost:8000/api/v1/securities/import \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
   -H "Content-Type: text/csv" -H "X-Source-Name: authorized-export" \
   --data-binary @securities.csv
+```
+
+Nhập BCTC theo schema CSV đã kiểm tra:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/stocks/HPG/financials/import \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H "Content-Type: text/csv" -H "X-Source-Name: authorized-financial-export" \
+  --data-binary @financial-statements.csv
+curl http://localhost:8000/api/v1/stocks/HPG/fundamentals
 ```
 
 Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc và giao diện hiển thị trạng thái thiếu dữ liệu. Chỉ bật `MARKET_DATA_MODE=fixture` cho demo/test; dữ liệu sẽ được dán nhãn `fixture` rõ ràng.
@@ -75,7 +86,8 @@ cd apps/web && npm run lint && npm run build
 
 - Yahoo Finance không phải nguồn dữ liệu được cấp phép riêng cho sản phẩm này; cần thay bằng feed có hợp đồng trước khi phân phối thương mại.
 - Registry kèm theo chỉ là bootstrap 13 mã, được ghi nguồn rõ ràng; độ phủ đầy đủ cần file CSV được phép hoặc connector master-data có hợp đồng.
-- Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, nguồn báo cáo tài chính, sentiment mạng xã hội hay danh mục VPS.
+- Pipeline BCTC và công thức nền tảng đã có cho CSV được cấp phép; chưa có credential provider tài chính live, peer set, dải lịch sử hoặc DCF.
+- Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, sentiment mạng xã hội hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.
 - PDF dùng font hệ thống và có thể bỏ dấu khi môi trường thiếu font Unicode tương thích.
 

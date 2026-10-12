@@ -6,8 +6,9 @@ The system is a modular monolith. FastAPI owns connector orchestration, normaliz
 Browser → /api/v1 → AnalysisService → ConnectorManager → Yahoo
                               │              └────────→ provider circuit state
                               ├──────→ OHLCV normalization/validation
-                              ├──────→ Technical + fundamental formula engines
+                              ├──────→ Technical + fundamental + valuation engines
                               ├──────→ Registry + incremental SQL storage
+                              ├──────→ Admin-authenticated CSV ingestion + audit log
                               ├──────→ RSS news metadata
                               └──────→ PDF renderer
 ```
@@ -16,7 +17,11 @@ Connectors return canonical schemas. `AnalysisService` tolerates news failure wh
 
 `MarketDataConnector` is the provider boundary. The manager applies configured priority, records consecutive failures in its process-local circuit state, and never selects fixture data implicitly. A provider is not described as live until a real request succeeds.
 
+Privileged CSV routes use an explicit Bearer admin token from environment configuration, constant-time comparison, reader/admin role separation, fixed-window rate limiting and audit events. The circuit registry is shared across `ConnectorManager` instances, with closed/open/half-open transitions and persisted source-health summaries.
+
 All analytical numbers are deterministic. `technical-v2` exposes separate trend, momentum, volume-confirmation and volatility-risk scores instead of counting positive/negative labels. See [technical formulas](TECHNICAL_ANALYSIS.md).
+
+Financial statements are normalized into periods and statement items before ratios are calculated. The selected period type (`quarter`, `year`, or `ttm`), source and reporting date are returned with metrics. Relative valuation requires explicit user assumptions and labels them; no forecast values are generated implicitly.
 
 ## Trust boundaries
 

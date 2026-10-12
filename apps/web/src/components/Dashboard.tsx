@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Analysis } from "@/lib/types";
+import type { Analysis, FinancialMetricResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
@@ -15,6 +15,7 @@ function formatDate(value: string | null) {
 export function Dashboard() {
   const [symbol, setSymbol] = useState("HPG");
   const [data, setData] = useState<Analysis | null>(null);
+  const [fundamentals, setFundamentals] = useState<FinancialMetricResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -35,9 +36,13 @@ export function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      setData(await fetchAnalysis(nextSymbol));
+      const analysis = await fetchAnalysis(nextSymbol);
+      setData(analysis);
+      const fundamentalResponse = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
+      setFundamentals(fundamentalResponse.ok ? await fundamentalResponse.json() : null);
     } catch (reason) {
       setData(null);
+      setFundamentals(null);
       setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu.");
     } finally {
       setLoading(false);
@@ -46,7 +51,11 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchAnalysis("HPG")
-      .then(setData)
+      .then(async (analysis) => {
+        setData(analysis);
+        const response = await fetch(`${API}/stocks/${encodeURIComponent(analysis.security.symbol)}/fundamentals`, { cache: "no-store" });
+        setFundamentals(response.ok ? await response.json() : null);
+      })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu."))
       .finally(() => setLoading(false));
   }, []);
@@ -106,6 +115,11 @@ export function Dashboard() {
         <div className="section-head"><div><h2>Bốn chiều kỹ thuật độc lập</h2></div><p>Điểm 0–100 theo công thức technical-v2. Điểm rủi ro cao nghĩa là biến động và drawdown lớn hơn.</p></div>
         <div className="score-table">{Object.entries(data.technicals.component_scores).map(([key, value]) => <div key={key}><span>{key === "trend" ? "Xu hướng" : key === "momentum" ? "Động lượng" : key === "volume_confirmation" ? "Xác nhận khối lượng" : "Rủi ro biến động"}</span><strong>{value === null ? "Chưa đủ dữ liệu" : `${decimal.format(value)} / 100`}</strong></div>)}</div>
         {data.technicals.conflicts.length > 0 && <div className="conflict" role="note"><strong>Tín hiệu xung đột</strong>{data.technicals.conflicts.map((item) => <p key={item}>{item}</p>)}</div>}
+      </section>
+
+      <section className="fundamental-section">
+        <div className="section-head"><div><p className="eyebrow">Phân tích cơ bản</p><h2>BCTC đã lưu trong hệ thống</h2></div><p>{fundamentals ? `Kỳ ${fundamentals.period_type ?? "không xác định"} · ${formatDate(fundamentals.period_end)} · nguồn ${fundamentals.source_name ?? "không rõ"}` : "Chưa có BCTC hợp lệ được kết nối cho mã này."}</p></div>
+        {fundamentals ? <><div className="metric-grid">{[["Doanh thu tăng trưởng", "revenue_growth_percent", "%"], ["Lợi nhuận tăng trưởng", "net_income_growth_percent", "%"], ["ROE", "roe_percent", "%"], ["ROA", "roa_percent", "%"], ["Biên ròng", "net_margin_percent", "%"], ["D/E", "debt_to_equity", "x"], ["Current ratio", "current_ratio", "x"], ["EPS", "eps", ""], ["P/E", "pe", "x"]].map(([label, key, suffix]) => <article key={key}><span>{label}</span><strong>{fundamentals.metrics[key] === null || fundamentals.metrics[key] === undefined ? "—" : `${decimal.format(fundamentals.metrics[key] as number)}${suffix}`}</strong></article>)}</div><ul className="metric-warnings">{fundamentals.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></> : <div className="empty">Hãy nạp CSV BCTC được cấp phép qua endpoint quản trị để bật phân tích theo quý/năm. Không suy đoán số liệu còn thiếu.</div>}
       </section>
 
       <section className="research-case">

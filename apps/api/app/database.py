@@ -108,6 +108,99 @@ class SourceHealthRecord(Base):
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AuditLogRecord(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    resource: Mapped[str] = mapped_column(String(128))
+    outcome: Mapped[str] = mapped_column(String(24), index=True)
+    source_ip: Mapped[str | None] = mapped_column(String(64))
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FinancialPeriodRecord(Base):
+    __tablename__ = "financial_periods"
+    __table_args__ = (UniqueConstraint("security_id", "period_end", "period_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    period_type: Mapped[str] = mapped_column(String(16), index=True)
+    fiscal_year: Mapped[int] = mapped_column(Integer)
+    fiscal_quarter: Mapped[int | None] = mapped_column(Integer)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_name: Mapped[str] = mapped_column(String(128))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
+    unit: Mapped[str] = mapped_column(String(32), default="VND")
+    currency: Mapped[str] = mapped_column(String(8), default="VND")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FinancialStatementItemRecord(Base):
+    __tablename__ = "financial_statement_items"
+    __table_args__ = (UniqueConstraint("period_id", "statement_type", "item_code"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period_id: Mapped[int] = mapped_column(ForeignKey("financial_periods.id"), index=True)
+    statement_type: Mapped[str] = mapped_column(String(24), index=True)
+    item_code: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(28, 6))
+    unit: Mapped[str] = mapped_column(String(32), default="VND")
+    source_name: Mapped[str] = mapped_column(String(128))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FinancialMetricRecord(Base):
+    __tablename__ = "financial_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    period_id: Mapped[int | None] = mapped_column(ForeignKey("financial_periods.id"), index=True)
+    metric_name: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
+    unit: Mapped[str] = mapped_column(String(32), default="ratio")
+    formula_version: Mapped[str] = mapped_column(String(32))
+    source_name: Mapped[str] = mapped_column(String(128))
+    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ValuationResultRecord(Base):
+    __tablename__ = "valuation_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    method: Mapped[str] = mapped_column(String(32))
+    scenario: Mapped[str] = mapped_column(String(16))
+    value: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
+    assumptions_json: Mapped[str] = mapped_column(Text)
+    source_name: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CorporateActionRecord(Base):
+    __tablename__ = "corporate_actions"
+    __table_args__ = (
+        UniqueConstraint("security_id", "action_type", "effective_at", "source_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    action_type: Mapped[str] = mapped_column(String(32))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ratio: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 6), nullable=True)
+    source_name: Mapped[str] = mapped_column(String(128))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 settings = get_settings()
 is_sqlite = settings.database_url.startswith("sqlite")
 engine_options: dict = {"connect_args": {"check_same_thread": False}} if is_sqlite else {}

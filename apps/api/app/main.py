@@ -1,27 +1,35 @@
+import json
 from contextlib import asynccontextmanager
 from io import BytesIO
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analytics.fundamental import calculate_financial_metrics
+from app.analytics.valuation import calculate_relative_valuation
+from app.auth import Principal, audit_success, require_admin
 from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError
 from app.connectors.fireant import FireAntConnector
-from app.database import SessionLocal, init_db
+from app.database import SecurityRecord, SessionLocal, ValuationResultRecord, init_db
 from app.registry import import_securities_csv, seed_registry_if_empty
 from app.reporting import build_pdf
-from app.repositories import SecuritiesRepository
+from app.repositories import FinancialRepository, SecuritiesRepository
 from app.schemas import (
     AnalysisResponse,
     FinancialInputs,
     FinancialMetricResult,
+    FinancialStatementImportResult,
     PriceSeries,
     SecuritiesImportResult,
     Security,
     SourceStatus,
     TechnicalSnapshot,
+    ValuationRequest,
+    ValuationResult,
 )
 from app.services import AnalysisService
 
@@ -33,8 +41,20 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Mạch Thị Trường API", version="0.2.0", lifespan=lifespan)
 settings = get_settings()
+production_docs = settings.app_environment.lower() not in {"production", "prod"}
+app = FastAPI(
+    title="Mạch Thị Trường API",
+    version="0.3.0",
+    lifespan=lifespan,
+    docs_url="/docs" if production_docs else None,
+    redoc_url="/redoc" if production_docs else None,
+    openapi_url="/openapi.json" if production_docs else None,
+)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[host.strip() for host in settings.allowed_hosts.split(",") if host.strip()],
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -123,16 +143,92 @@ async def stock(symbol: str):
 
 @app.post("/api/v1/securities/import", response_model=SecuritiesImportResult)
 def import_securities(
+    request: Request,
     csv_content: str = Body(media_type="text/csv"),
     source_name: str = Header(default="user-authorized-import", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
 ):
     """Import an authorized CSV export; never downloads protected exchange data implicitly."""
-    return import_securities_csv(csv_content, source_name)
+    if len(csv_content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="CSV is too large."
+        )
+    fieldnames = set(csv_content.splitlines()[0].split(",")) if csv_content.strip() else set()
+    required_fields = {"symbol", "name", "exchange"}
+    if not required_fields.issubset(fieldnames):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_csv_schema", "required": sorted(required_fields)},
+        )
+    result = import_securities_csv(csv_content, source_name[:128])
+    audit_success(request, principal, result)
+    return result
 
 
 @app.post("/api/v1/fundamentals/calculate", response_model=FinancialMetricResult)
 def fundamentals_calculate(inputs: FinancialInputs) -> FinancialMetricResult:
     return calculate_financial_metrics(inputs)
+
+
+@app.post(
+    "/api/v1/stocks/{symbol}/financials/import",
+    response_model=FinancialStatementImportResult,
+)
+def import_financials(
+    symbol: str,
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="user-authorized-financial-export", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+):
+    if len(csv_content.encode("utf-8")) > 2_000_000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="CSV is too large."
+        )
+    try:
+        with SessionLocal() as session:
+            result = FinancialRepository(session).import_csv(symbol, csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    audit_success(request, principal, result, action="financials.import")
+    return result
+
+
+@app.get("/api/v1/stocks/{symbol}/fundamentals", response_model=FinancialMetricResult)
+def fundamentals(symbol: str) -> FinancialMetricResult:
+    try:
+        with SessionLocal() as session:
+            return FinancialRepository(session).calculate_latest(symbol)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/fundamentals/valuation", response_model=ValuationResult)
+def valuation(inputs: ValuationRequest) -> ValuationResult:
+    result = calculate_relative_valuation(inputs)
+    with SessionLocal() as session:
+        security = session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == inputs.symbol.strip().upper())
+        )
+        if security is not None:
+            for scenario, value in result.scenarios.items():
+                session.add(
+                    ValuationResultRecord(
+                        security_id=security.id,
+                        method=result.method,
+                        scenario=scenario,
+                        value=value,
+                        assumptions_json=json.dumps(result.assumptions, ensure_ascii=False),
+                        source_name=inputs.assumption_source,
+                        created_at=result.calculated_at,
+                    )
+                )
+            session.commit()
+    return result
 
 
 async def translate_connector_error(operation):

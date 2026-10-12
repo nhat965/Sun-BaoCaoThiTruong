@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class Provenance(BaseModel):
@@ -114,21 +114,28 @@ class SecuritiesImportResult(BaseModel):
 
 
 class FinancialInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     revenue: float | None = None
     prior_revenue: float | None = None
     net_income: float | None = None
     prior_net_income: float | None = None
     total_assets: float | None = None
+    prior_total_assets: float | None = None
     total_equity: float | None = None
+    prior_total_equity: float | None = None
     total_debt: float | None = None
     current_assets: float | None = None
     current_liabilities: float | None = None
     operating_income: float | None = None
+    gross_profit: float | None = None
     interest_expense: float | None = None
     operating_cash_flow: float | None = None
     capital_expenditure: float | None = None
     shares_outstanding: float | None = None
     market_price: float | None = None
+    enterprise_value: float | None = None
+    ebitda: float | None = None
 
 
 class FinancialMetricResult(BaseModel):
@@ -136,3 +143,39 @@ class FinancialMetricResult(BaseModel):
     calculated_at: datetime
     formula_version: str = "fundamental-v1"
     warnings: list[str]
+    symbol: str | None = None
+    period_type: str | None = None
+    period_end: datetime | None = None
+    source_name: str | None = None
+
+
+class FinancialStatementImportResult(BaseModel):
+    inserted_periods: int
+    updated_periods: int
+    inserted_items: int
+    updated_items: int
+    rejected: int
+    errors: list[str]
+
+
+class ValuationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    eps: float = Field(gt=0)
+    bvps: float = Field(gt=0)
+    pe_multiple: float = Field(gt=0, le=200)
+    pb_multiple: float = Field(gt=0, le=50)
+    bull_multiplier: float = Field(default=1.15, gt=0, le=3)
+    base_multiplier: float = Field(default=1.0, gt=0, le=3)
+    bear_multiplier: float = Field(default=0.8, gt=0, le=3)
+    assumption_source: str = "user-assumption"
+
+
+class ValuationResult(BaseModel):
+    symbol: str
+    method: str = "relative-pe-pb"
+    scenarios: dict[str, float | None]
+    assumptions: dict[str, float | str]
+    warnings: list[str] = Field(default_factory=list)
+    calculated_at: datetime
