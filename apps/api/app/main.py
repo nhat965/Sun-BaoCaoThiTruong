@@ -68,6 +68,7 @@ from app.portfolio import (
 from app.registry import import_securities_csv, import_securities_xlsx, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
+from app.risk_scenarios import calculate_risks, calculate_scenarios
 from app.schemas import (
     AlertRuleRequest,
     AnalysisResponse,
@@ -94,6 +95,8 @@ from app.schemas import (
     MarketIndicesResponse,
     MarketOverview,
     MarketRegimeResponse,
+    MarketRisksResponse,
+    MarketScenariosResponse,
     PortfolioCreate,
     PortfolioImportResult,
     PortfolioSummary,
@@ -419,6 +422,16 @@ def market_breadth() -> MarketBreadthResponse:
 @app.get("/api/v1/market/regime", response_model=MarketRegimeResponse)
 def market_regime() -> MarketRegimeResponse:
     return calculate_market_regime()
+
+
+@app.get("/api/v1/market/risks", response_model=MarketRisksResponse)
+def market_risks() -> MarketRisksResponse:
+    return calculate_risks()
+
+
+@app.get("/api/v1/market/scenarios", response_model=MarketScenariosResponse)
+def market_scenarios() -> MarketScenariosResponse:
+    return calculate_scenarios()
 
 
 @app.get("/api/v1/market/sectors", response_model=SectorIntelligenceResponse)

@@ -229,6 +229,47 @@ class LiquiditySnapshotRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class MarketRiskSignalRecord(Base):
+    __tablename__ = "market_risk_signals"
+    __table_args__ = (UniqueConstraint("market_session_date", "signal_id", "formula_version", name="uq_market_risk_signal_session"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    signal_id: Mapped[str] = mapped_column(String(64), index=True)
+    signal_type: Mapped[str] = mapped_column(String(32), index=True)
+    severity: Mapped[str] = mapped_column(String(16), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    trigger_json: Mapped[str] = mapped_column(Text, default="{}")
+    evidence_json: Mapped[str] = mapped_column(Text, default="[]")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    provider: Mapped[str] = mapped_column(String(128), default="canonical-price-selection")
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    formula_version: Mapped[str] = mapped_column(String(32), default="market-risk-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MarketScenarioSnapshotRecord(Base):
+    __tablename__ = "market_scenario_snapshots"
+    __table_args__ = (UniqueConstraint("market_session_date", "scenario_id", "formula_version", name="uq_market_scenario_session"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    scenario_id: Mapped[str] = mapped_column(String(24), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    assumptions_json: Mapped[str] = mapped_column(Text, default="[]")
+    evidence_json: Mapped[str] = mapped_column(Text, default="[]")
+    invalidation_json: Mapped[str] = mapped_column(Text, default="[]")
+    risks_json: Mapped[str] = mapped_column(Text, default="[]")
+    watch_json: Mapped[str] = mapped_column(Text, default="[]")
+    data_status: Mapped[str] = mapped_column(String(16), default="unavailable")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    formula_version: Mapped[str] = mapped_column(String(32), default="market-scenario-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
 
