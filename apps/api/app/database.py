@@ -179,6 +179,56 @@ class MarketRegimeSnapshotRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SectorSnapshotRecord(Base):
+    __tablename__ = "sector_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "sector_id",
+            "market_session_date",
+            "formula_version",
+            name="uq_sector_snapshot_session_formula",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sector_id: Mapped[str] = mapped_column(String(128), index=True)
+    sector_name: Mapped[str] = mapped_column(String(128))
+    taxonomy_version: Mapped[str] = mapped_column(String(32), default="registry-v1")
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    provider: Mapped[str] = mapped_column(String(128), default="canonical-price-selection")
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage_json: Mapped[str] = mapped_column(Text, default="{}")
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    formula_version: Mapped[str] = mapped_column(String(32), default="sector-intelligence-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LiquiditySnapshotRecord(Base):
+    __tablename__ = "liquidity_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_session_date",
+            "formula_version",
+            name="uq_liquidity_snapshot_session_formula",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    provider: Mapped[str] = mapped_column(String(128), default="canonical-price-selection")
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage_json: Mapped[str] = mapped_column(Text, default="{}")
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    formula_version: Mapped[str] = mapped_column(String(32), default="liquidity-intelligence-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
 

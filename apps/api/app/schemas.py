@@ -703,6 +703,89 @@ class MarketRegimeResponse(BaseModel):
     formula_version: str = "market-regime-v1"
 
 
+class SectorMetric(BaseModel):
+    sector_id: str
+    sector_name: str
+    taxonomy_version: str = "registry-v1"
+    stock_count: int = 0
+    eligible_1d: int = 0
+    eligible_5d: int = 0
+    eligible_20d: int = 0
+    advancers: int = 0
+    decliners: int = 0
+    unchanged: int = 0
+    performance_1d_percent: float | None = None
+    performance_5d_percent: float | None = None
+    performance_20d_percent: float | None = None
+    volume: int | None = None
+    average_volume_5: float | None = None
+    average_volume_10: float | None = None
+    average_volume_20: float | None = None
+    relative_volume: float | None = None
+    actual_trading_value: float | None = None
+    estimated_trading_value: float | None = None
+    relative_strength_vs_vnindex_percent: float | None = None
+    above_ma20_percent: float | None = None
+    above_ma50_percent: float | None = None
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class SectorIntelligenceResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    data_mode: str = "unavailable"
+    validation_status: str = "unvalidated"
+    taxonomy_version: str = "registry-v1"
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    sort_by: str = "performance_1d"
+    sectors: list[SectorMetric] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "sector-intelligence-v1"
+
+
+class LiquidityLeader(BaseModel):
+    symbol: str
+    sector: str | None = None
+    volume: int | None = None
+    actual_trading_value: float | None = None
+    return_1d_percent: float | None = None
+    relative_volume: float | None = None
+
+
+class LiquidityResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    data_mode: str = "unavailable"
+    validation_status: str = "unvalidated"
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    total_volume: int | None = None
+    average_volume_5: float | None = None
+    average_volume_10: float | None = None
+    average_volume_20: float | None = None
+    relative_volume: float | None = None
+    total_actual_trading_value: float | None = None
+    average_actual_trading_value_5: float | None = None
+    average_actual_trading_value_10: float | None = None
+    average_actual_trading_value_20: float | None = None
+    top5_volume_share_percent: float | None = None
+    top10_volume_share_percent: float | None = None
+    top5_trading_value_share_percent: float | None = None
+    top10_trading_value_share_percent: float | None = None
+    volume_expansion_count: int | None = None
+    decline_heavy_volume_count: int | None = None
+    leaders: list[LiquidityLeader] = Field(default_factory=list)
+    foreign_net_value: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "liquidity-intelligence-v1"
+
+
 class MarketOverview(BaseModel):
     status: Literal["available", "partial", "unavailable"]
     as_of: datetime | None = None

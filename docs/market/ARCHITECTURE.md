@@ -1,4 +1,4 @@
-# Market Intelligence architecture — PR-A/PR-B foundation
+# Market Intelligence architecture — PR-A/PR-B/PR-C foundation
 
 PR-A establishes the market-data contract used by later breadth, sector, risk and report
 features. It deliberately separates source records from derived analytics.
@@ -17,6 +17,8 @@ features. It deliberately separates source records from derived analytics.
 - `market_breadth_snapshots` and `market_regime_snapshots` store derived results keyed by
   session and formula version; they retain coverage, warnings and limitations alongside
   the metrics.
+- `sector_snapshots` and `liquidity_snapshots` persist taxonomy-aware sector metrics and
+  liquidity diagnostics without converting volume into trading value.
 
 ## Trust and deduplication
 
@@ -43,5 +45,7 @@ holiday gap as a missing candle.
 - `GET /api/v1/market/breadth` and `GET /api/v1/market/regime` expose deterministic
   breadth/trend results with explicit denominators and evidence. They never infer index,
   foreign-flow or actual trading-value data.
+- `GET /api/v1/market/sectors`, `/market/sectors/{sector_id}` and `/market/liquidity`
+  expose sector ranking/drilldown and participation metrics with source/coverage gaps.
 
 Migration `0017_market_data_foundation` is additive and has an explicit downgrade.
