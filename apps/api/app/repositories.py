@@ -1,26 +1,38 @@
 import csv
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.fundamental import calculate_financial_metrics
+from app.config import get_settings
 from app.connectors.news import group_hash
 from app.database import (
     AuditLogRecord,
     FinancialMetricRecord,
     FinancialPeriodRecord,
     FinancialStatementItemRecord,
+    FinancialValidationReportRecord,
     NewsArticleRecord,
     NewsEventRecord,
     PriceObservation,
     SecurityRecord,
     SourceHealthRecord,
 )
+from app.financial_normalization import (
+    MAPPING_VERSION,
+    canonical_item_code,
+    infer_period_start,
+    normalize_currency,
+    normalize_period_type,
+)
+from app.financial_validation import ValidationIssue, validate_period
+from app.price_integrity import market_session_date, provider_id_for
 from app.schemas import (
     FinancialInputs,
     FinancialMetricResult,
@@ -29,6 +41,7 @@ from app.schemas import (
     FinancialStatementPeriod,
     FinancialStatementsResponse,
     FinancialTrendResponse,
+    FinancialValidationReport,
     NewsItem,
     PriceSeries,
     Security,
@@ -72,7 +85,16 @@ def comparable_financial_period(
             for period in candidates
             if period.fiscal_quarter == current.fiscal_quarter
         ]
-    return max(candidates, key=lambda period: period.period_end, default=None)
+    return max(
+        candidates,
+        key=lambda period: (
+            period.period_end,
+            period.statement_status == "amended",
+            period.verification_status == "verified",
+            period.updated_at,
+        ),
+        default=None,
+    )
 
 
 class SecuritiesRepository:
@@ -150,8 +172,17 @@ class PriceRepository:
         )
         if security_row is None:
             raise ValueError("Security must exist before storing prices")
+        if series.security.currency.upper() != security_row.currency.upper():
+            raise ValueError(
+                f"Price currency {series.security.currency} does not match "
+                f"securities master currency {security_row.currency}"
+            )
         inserted = updated = skipped = 0
         previous = None
+        settings = get_settings()
+        provider_id = provider_id_for(
+            series.provenance.source, series.provenance.provider_id
+        )
         for bar in series.bars:
             quality_flags = []
             if bar.volume == 0:
@@ -161,11 +192,14 @@ class PriceRepository:
                     quality_flags.append("price_jump_over_20_percent")
                 if (bar.timestamp.date() - previous.timestamp.date()).days > 4:
                     quality_flags.append("calendar_gap_over_4_days")
+            session_date = market_session_date(bar.timestamp, settings.market_timezone)
             values = {
                 "security_id": security_row.id,
                 "provider": series.provenance.source,
+                "provider_id": provider_id,
                 "provider_symbol": series.provenance.provider_symbol,
                 "market_timestamp": bar.timestamp,
+                "market_session_date": session_date,
                 "ingested_at": series.provenance.retrieved_at,
                 "interval": series.interval,
                 "open": Decimal(str(bar.open)),
@@ -173,19 +207,32 @@ class PriceRepository:
                 "low": Decimal(str(bar.low)),
                 "close": Decimal(str(bar.close)),
                 "volume": bar.volume,
+                "actual_trading_value": (
+                    Decimal(str(bar.actual_trading_value))
+                    if bar.actual_trading_value is not None
+                    else None
+                ),
+                "market_cap": (
+                    Decimal(str(bar.market_cap)) if bar.market_cap is not None else None
+                ),
                 "currency": series.security.currency,
                 "adjusted": series.adjusted,
                 "validation_status": series.provenance.validation_status,
                 "adjustment_policy": series.provenance.adjustment_policy,
                 "quality_flags_json": json.dumps(quality_flags),
                 "source_mode": series.provenance.mode,
+                "source_url": series.provenance.source_url,
+                "coverage": series.provenance.coverage,
+                "freshness": series.provenance.freshness,
+                "last_updated": series.provenance.last_updated or series.provenance.retrieved_at,
             }
             existing = self.session.scalar(
                 select(PriceObservation).where(
                     PriceObservation.security_id == security_row.id,
-                    PriceObservation.provider == series.provenance.source,
-                    PriceObservation.market_timestamp == bar.timestamp,
+                    PriceObservation.provider_id == provider_id,
+                    PriceObservation.market_session_date == session_date,
                     PriceObservation.interval == series.interval,
+                    PriceObservation.adjusted == series.adjusted,
                 )
             )
             if existing is None:
@@ -197,9 +244,38 @@ class PriceRepository:
             ):
                 skipped += 1
             else:
-                for key, value in values.items():
-                    setattr(existing, key, value)
-                updated += 1
+                material_keys = {
+                    "provider",
+                    "provider_id",
+                    "provider_symbol",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "actual_trading_value",
+                    "market_cap",
+                    "currency",
+                    "adjusted",
+                    "validation_status",
+                    "adjustment_policy",
+                    "quality_flags_json",
+                    "source_mode",
+                    "source_url",
+                    "coverage",
+                    "freshness",
+                }
+                unchanged = all(
+                    getattr(existing, key) == value
+                    for key, value in values.items()
+                    if key in material_keys
+                )
+                if unchanged:
+                    skipped += 1
+                else:
+                    for key, value in values.items():
+                        setattr(existing, key, value)
+                    updated += 1
             previous = bar
         self.session.flush()
         return IngestionCounts(inserted=inserted, updated=updated, skipped=skipped)
@@ -275,7 +351,7 @@ class SourceHealthRepository:
 
 
 FINANCIAL_STATEMENT_TYPES = {"income", "balance", "cash_flow"}
-FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ttm"}
+FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ytd", "ttm"}
 FINANCIAL_STATEMENT_SCOPES = {"consolidated", "separate"}
 FINANCIAL_STATEMENT_STATUSES = {"original", "amended"}
 FINANCIAL_VERIFICATION_STATUSES = {"verified", "unverified", "rejected"}
@@ -287,6 +363,17 @@ FINANCIAL_UNIT_MULTIPLIERS = {
     "SHARES": (Decimal(1), "shares"),
     "RATIO": (Decimal(1), "ratio"),
 }
+
+
+def _entity_type(security: SecurityRecord) -> str:
+    text = f"{security.sector or ''} {security.industry or ''}".lower()
+    if "ngân hàng" in text or "bank" in text:
+        return "bank"
+    if "chứng khoán" in text or "securities" in text:
+        return "securities"
+    if "bảo hiểm" in text or "insurance" in text:
+        return "insurance"
+    return "non_financial"
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -301,7 +388,13 @@ class FinancialRepository:
         self.session = session
 
     def import_csv(
-        self, symbol: str, content: str, default_source: str
+        self,
+        symbol: str,
+        content: str,
+        default_source: str,
+        *,
+        strict: bool = False,
+        accept_verified_status: bool = True,
     ) -> FinancialStatementImportResult:
         security = self.session.scalar(
             select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
@@ -311,7 +404,12 @@ class FinancialRepository:
         inserted_periods = updated_periods = inserted_items = updated_items = rejected = 0
         skipped_items = 0
         errors: list[str] = []
-        seen_periods: set[tuple[datetime, str]] = set()
+        import_warnings: list[str] = []
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        retrieved_at_default = datetime.now(UTC)
+        seen_periods: set[tuple[datetime, str, str]] = set()
+        seen_items: set[tuple[datetime, str, str, str, str]] = set()
+        touched_period_ids: set[int] = set()
         reader = csv.DictReader(StringIO(content))
         required = {
             "period_end",
@@ -328,11 +426,12 @@ class FinancialRepository:
                 period_end = _parse_datetime(row.get("period_end"))
                 if period_end is None:
                     raise ValueError("period_end is required")
-                period_type = (row.get("period_type") or "").strip().lower()
+                period_type = normalize_period_type(row.get("period_type") or "")
                 statement_scope = (row.get("statement_scope") or "consolidated").strip().lower()
                 statement_status = (row.get("statement_status") or "original").strip().lower()
                 statement_type = (row.get("statement_type") or "").strip().lower()
-                item_code = (row.get("item_code") or "").strip().lower()
+                raw_item_code = (row.get("item_code") or "").strip()
+                item_code = canonical_item_code(raw_item_code)
                 if period_type not in FINANCIAL_PERIOD_TYPES:
                     raise ValueError(f"period_type must be one of {sorted(FINANCIAL_PERIOD_TYPES)}")
                 if statement_type not in FINANCIAL_STATEMENT_TYPES:
@@ -347,7 +446,7 @@ class FinancialRepository:
                     raise ValueError(
                         f"statement_status must be one of {sorted(FINANCIAL_STATEMENT_STATUSES)}"
                     )
-                if not item_code or len(item_code) > 64:
+                if len(raw_item_code) > 128 or len(item_code) > 64:
                     raise ValueError("item_code is required and must be <= 64 characters")
                 raw_value = Decimal((row.get("value") or "").strip())
                 raw_unit = (row.get("unit") or "VND").strip().upper()
@@ -358,6 +457,11 @@ class FinancialRepository:
                     )
                 multiplier, normalized_unit = FINANCIAL_UNIT_MULTIPLIERS[raw_unit]
                 value = raw_value * multiplier
+                row_currency = normalize_currency(row.get("currency"))
+                if normalized_unit == "VND" and row_currency != "VND":
+                    raise ValueError(
+                        "currency must be VND when the declared unit is a VND scale"
+                    )
                 verification_status = (
                     row.get("verification_status") or "unverified"
                 ).strip().lower()
@@ -366,23 +470,43 @@ class FinancialRepository:
                         "verification_status must be one of "
                         f"{sorted(FINANCIAL_VERIFICATION_STATUSES)}"
                     )
+                if verification_status == "verified" and not accept_verified_status:
+                    verification_status = "unverified"
+                    import_warnings.append(
+                        "Automated retrieval does not grant verified status; stored as unverified."
+                    )
                 fiscal_year = int((row.get("fiscal_year") or "").strip())
                 quarter_text = (row.get("fiscal_quarter") or "").strip()
                 fiscal_quarter = int(quarter_text) if quarter_text else None
                 if fiscal_quarter is not None and fiscal_quarter not in {1, 2, 3, 4}:
                     raise ValueError("fiscal_quarter must be 1-4")
+                period_start = infer_period_start(
+                    period_end,
+                    period_type,
+                    fiscal_year,
+                    fiscal_quarter,
+                    _parse_datetime(row.get("period_start")),
+                )
+                accounting_standard = (
+                    row.get("accounting_standard") or "unknown"
+                ).strip().lower()[:32]
+                data_version = (row.get("data_version") or "financial-v1").strip()[:32]
+                row_retrieved_at = _parse_datetime(row.get("retrieved_at"))
+                retrieved_at = row_retrieved_at or retrieved_at_default
                 period = self.session.scalar(
                     select(FinancialPeriodRecord).where(
                         FinancialPeriodRecord.security_id == security.id,
                         FinancialPeriodRecord.period_end == period_end,
                         FinancialPeriodRecord.period_type == period_type,
                         FinancialPeriodRecord.statement_scope == statement_scope,
+                        FinancialPeriodRecord.statement_status == statement_status,
                     )
                 )
                 source_name = (row.get("source_name") or default_source).strip()[:128]
                 if period is None:
                     period = FinancialPeriodRecord(
                         security_id=security.id,
+                        period_start=period_start,
                         period_end=period_end,
                         period_type=period_type,
                         fiscal_year=fiscal_year,
@@ -393,8 +517,13 @@ class FinancialRepository:
                         verification_status=verification_status,
                         statement_scope=statement_scope,
                         statement_status=statement_status,
+                        accounting_standard=accounting_standard,
                         unit="VND" if normalized_unit == "VND" else normalized_unit,
-                        currency=(row.get("currency") or "VND").upper(),
+                        currency=row_currency,
+                        retrieved_at=retrieved_at,
+                        validated_at=None,
+                        data_version=data_version,
+                        content_hash=content_hash,
                         updated_at=datetime.now(UTC),
                     )
                     self.session.add(period)
@@ -405,18 +534,66 @@ class FinancialRepository:
                         period.verification_status == "verified"
                         and verification_status != "verified"
                     )
-                    if may_update_period:
+                    period_source_url = row.get("source_url") or period.source_url
+                    period_unit = "VND" if normalized_unit == "VND" else normalized_unit
+                    period_currency = row_currency if row.get("currency") else period.currency
+                    if period.unit == "VND" and period_currency != "VND":
+                        raise ValueError(
+                            "currency must remain VND for a VND-denominated period"
+                        )
+                    period_changed = may_update_period and any(
+                        (
+                            period.source_name != source_name,
+                            period.source_url != period_source_url,
+                            period.verification_status != verification_status,
+                            period.unit != period_unit,
+                            period.currency != period_currency,
+                            period.fiscal_year != fiscal_year,
+                            period.fiscal_quarter != fiscal_quarter,
+                            period.period_start != period_start,
+                            period.accounting_standard != accounting_standard,
+                            period.data_version != data_version,
+                            period.content_hash != content_hash,
+                            row_retrieved_at is not None
+                            and period.retrieved_at != row_retrieved_at,
+                        )
+                    )
+                    if period_changed:
                         period.source_name = source_name
-                        period.source_url = row.get("source_url") or period.source_url
+                        period.source_url = period_source_url
                         period.verification_status = verification_status
-                        period.statement_status = statement_status
-                        period.unit = "VND" if normalized_unit == "VND" else normalized_unit
-                        period.currency = (row.get("currency") or period.currency).upper()
+                        period.unit = period_unit
+                        period.currency = period_currency
+                        period.fiscal_year = fiscal_year
+                        period.fiscal_quarter = fiscal_quarter
+                        period.period_start = period_start
+                        period.accounting_standard = accounting_standard
+                        period.data_version = data_version
+                        period.content_hash = content_hash
+                        if row_retrieved_at is not None:
+                            period.retrieved_at = row_retrieved_at
                         period.updated_at = datetime.now(UTC)
-                    period_key = (period_end, f"{period_type}:{statement_scope}")
-                    if may_update_period and period_key not in seen_periods:
+                    period_key = (
+                        period_end,
+                        f"{period_type}:{statement_scope}",
+                        statement_status,
+                    )
+                    if period_changed and period_key not in seen_periods:
                         updated_periods += 1
-                seen_periods.add((period_end, f"{period_type}:{statement_scope}"))
+                seen_periods.add(
+                    (period_end, f"{period_type}:{statement_scope}", statement_status)
+                )
+                touched_period_ids.add(period.id)
+                item_key = (
+                    period_end,
+                    period_type,
+                    statement_scope,
+                    statement_status,
+                    f"{statement_type}:{item_code}",
+                )
+                if item_key in seen_items:
+                    raise ValueError("duplicate financial item in the same CSV batch")
+                seen_items.add(item_key)
                 item = self.session.scalar(
                     select(FinancialStatementItemRecord).where(
                         FinancialStatementItemRecord.period_id == period.id,
@@ -430,6 +607,8 @@ class FinancialRepository:
                             period_id=period.id,
                             statement_type=statement_type,
                             item_code=item_code,
+                            raw_item_code=raw_item_code,
+                            mapping_version=MAPPING_VERSION,
                             value=value,
                             unit=normalized_unit,
                             raw_value=raw_value,
@@ -448,18 +627,144 @@ class FinancialRepository:
                     ):
                         skipped_items += 1
                     else:
-                        item.value = value
-                        item.unit = normalized_unit
-                        item.raw_value = raw_value
-                        item.raw_unit = raw_unit
-                        item.source_name = source_name
-                        item.source_url = row.get("source_url") or item.source_url
-                        item.verification_status = verification_status
-                        item.updated_at = datetime.now(UTC)
-                        updated_items += 1
+                        item_source_url = row.get("source_url") or item.source_url
+                        item_changed = any(
+                            (
+                                item.value != value,
+                                item.unit != normalized_unit,
+                                item.raw_value != raw_value,
+                                item.raw_unit != raw_unit,
+                                item.source_name != source_name,
+                                item.source_url != item_source_url,
+                                item.verification_status != verification_status,
+                                item.raw_item_code != raw_item_code,
+                                item.mapping_version != MAPPING_VERSION,
+                            )
+                        )
+                        if item_changed:
+                            item.value = value
+                            item.unit = normalized_unit
+                            item.raw_value = raw_value
+                            item.raw_unit = raw_unit
+                            item.source_name = source_name
+                            item.source_url = item_source_url
+                            item.verification_status = verification_status
+                            item.raw_item_code = raw_item_code
+                            item.mapping_version = MAPPING_VERSION
+                            item.updated_at = datetime.now(UTC)
+                            updated_items += 1
+                        else:
+                            skipped_items += 1
             except (ArithmeticError, TypeError, ValueError) as exc:
                 rejected += 1
                 errors.append(f"line {line_number}: {exc}")
+        self.session.flush()
+        validation_reports: list[FinancialValidationReport] = []
+        serious_validation_error = False
+        created_at = datetime.now(UTC)
+        for period_id in sorted(touched_period_ids):
+            period = self.session.get(FinancialPeriodRecord, period_id)
+            if period is None:
+                continue
+            period_items = list(
+                self.session.scalars(
+                    select(FinancialStatementItemRecord).where(
+                        FinancialStatementItemRecord.period_id == period_id
+                    )
+                )
+            )
+            values = {item.item_code: Decimal(item.value) for item in period_items}
+            validation = validate_period(
+                period_type=period.period_type,
+                period_start=period.period_start,
+                period_end=period.period_end,
+                reported_at=period.reported_at,
+                currency=period.currency,
+                statement_scope=period.statement_scope,
+                statement_status=period.statement_status,
+                source_name=period.source_name,
+                source_url=period.source_url,
+                values=values,
+            )
+            issues = list(validation.issues)
+            issues.extend(
+                ValidationIssue(
+                    code="import_warning",
+                    severity="warning",
+                    message=warning,
+                    source_name=period.source_name,
+                )
+                for warning in dict.fromkeys(import_warnings)
+            )
+            report_errors = [issue.message for issue in issues if issue.severity == "error"]
+            report_warnings = [
+                issue.message for issue in issues if issue.severity == "warning"
+            ]
+            status = "invalid" if report_errors else validation.status
+            serious_validation_error = serious_validation_error or bool(report_errors)
+            validation_reports.append(
+                FinancialValidationReport(
+                    symbol=security.symbol,
+                    period_end=period.period_end,
+                    period_type=period.period_type,
+                    statement_scope=period.statement_scope,
+                    statement_status=period.statement_status,
+                    source_name=period.source_name,
+                    source_url=period.source_url,
+                    checks=validation.checks,
+                    errors=report_errors,
+                    warnings=report_warnings,
+                    validation_status=status,
+                    issues=[issue.__dict__ for issue in issues],
+                    created_at=created_at,
+                )
+            )
+            errors.extend(
+                f"{period.period_end.date()} {period.statement_scope}/{period.statement_status}: {message}"
+                for message in report_errors
+            )
+            rejected += len(report_errors)
+
+        rolled_back = serious_validation_error or (strict and rejected > 0)
+        if rolled_back:
+            self.session.rollback()
+            inserted_periods = updated_periods = inserted_items = updated_items = 0
+            skipped_items = 0
+        for report in validation_reports:
+            self.session.add(
+                FinancialValidationReportRecord(
+                    security_id=security.id,
+                    period_id=None if rolled_back else next(
+                        (
+                            period_id
+                            for period_id in touched_period_ids
+                            if (
+                                (period := self.session.get(FinancialPeriodRecord, period_id))
+                                and period.period_end == report.period_end
+                                and period.period_type == report.period_type
+                                and period.statement_scope == report.statement_scope
+                                and period.statement_status == report.statement_status
+                            )
+                        ),
+                        None,
+                    ),
+                    period_end=report.period_end,
+                    period_type=report.period_type,
+                    statement_scope=report.statement_scope,
+                    statement_status=report.statement_status,
+                    source_name=report.source_name,
+                    source_url=report.source_url,
+                    checks_json=json.dumps(report.checks),
+                    issues_json=json.dumps(
+                        [issue.model_dump() for issue in report.issues],
+                        ensure_ascii=False,
+                    ),
+                    errors_json=json.dumps(report.errors),
+                    warnings_json=json.dumps(report.warnings),
+                    validation_status=report.validation_status,
+                    created_at=report.created_at,
+                )
+            )
         self.session.commit()
         return FinancialStatementImportResult(
             inserted_periods=inserted_periods,
@@ -469,6 +774,7 @@ class FinancialRepository:
             skipped_items=skipped_items,
             rejected=rejected,
             errors=errors[:100],
+            validation_reports=validation_reports,
         )
 
     def statements(
@@ -518,6 +824,7 @@ class FinancialRepository:
             )
             payload.append(
                 FinancialStatementPeriod(
+                    period_start=period.period_start,
                     period_end=period.period_end,
                     period_type=period.period_type,
                     fiscal_year=period.fiscal_year,
@@ -525,15 +832,22 @@ class FinancialRepository:
                     reported_at=period.reported_at,
                     statement_scope=period.statement_scope,
                     statement_status=period.statement_status,
+                    accounting_standard=period.accounting_standard,
                     currency=period.currency,
                     source_name=period.source_name,
                     source_url=period.source_url,
                     verification_status=period.verification_status,
+                    retrieved_at=period.retrieved_at,
+                    validated_at=period.validated_at,
+                    data_version=period.data_version,
+                    content_hash=period.content_hash,
                     updated_at=period.updated_at,
                     items=[
                         FinancialStatementItem(
                             statement_type=row.statement_type,
                             item_code=row.item_code,
+                            raw_item_code=row.raw_item_code,
+                            mapping_version=row.mapping_version,
                             value=float(row.value),
                             unit=row.unit,
                             raw_value=(
@@ -559,6 +873,39 @@ class FinancialRepository:
             periods=payload,
         )
 
+    def validation_reports(
+        self, symbol: str, *, limit: int = 50
+    ) -> list[FinancialValidationReport]:
+        security = self.session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
+        )
+        if security is None:
+            raise ValueError(f"Mã {symbol.strip().upper()} chưa có trong securities master.")
+        rows = self.session.scalars(
+            select(FinancialValidationReportRecord)
+            .where(FinancialValidationReportRecord.security_id == security.id)
+            .order_by(FinancialValidationReportRecord.created_at.desc())
+            .limit(limit)
+        ).all()
+        return [
+            FinancialValidationReport(
+                symbol=security.symbol,
+                period_end=row.period_end,
+                period_type=row.period_type,
+                statement_scope=row.statement_scope,
+                statement_status=row.statement_status,
+                source_name=row.source_name,
+                source_url=row.source_url,
+                checks=json.loads(row.checks_json),
+                errors=json.loads(row.errors_json),
+                warnings=json.loads(row.warnings_json),
+                validation_status=row.validation_status,
+                issues=json.loads(getattr(row, "issues_json", "[]")),
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
     def calculate_latest(self, symbol: str) -> FinancialMetricResult:
         security = self.session.scalar(
             select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
@@ -569,7 +916,12 @@ class FinancialRepository:
             self.session.scalars(
                 select(FinancialPeriodRecord)
                 .where(FinancialPeriodRecord.security_id == security.id)
-                .order_by(FinancialPeriodRecord.period_end.desc())
+                .order_by(
+                    FinancialPeriodRecord.period_end.desc(),
+                    case((FinancialPeriodRecord.statement_status == "amended", 0), else_=1),
+                    case((FinancialPeriodRecord.verification_status == "verified", 0), else_=1),
+                    FinancialPeriodRecord.updated_at.desc(),
+                )
             )
         )
         if not periods:
@@ -578,6 +930,16 @@ class FinancialRepository:
             (period for period in periods if period.statement_scope == "consolidated"), periods[0]
         )
         previous = comparable_financial_period(periods, current)
+        sequential_candidates = [
+            period
+            for period in periods
+            if period.period_type == current.period_type
+            and period.statement_scope == current.statement_scope
+            and period.period_end < current.period_end
+        ]
+        previous_sequential = max(
+            sequential_candidates, key=lambda period: period.period_end, default=None
+        )
 
         def values(period: FinancialPeriodRecord | None) -> dict[str, float]:
             if period is None:
@@ -591,6 +953,39 @@ class FinancialRepository:
 
         current_values = values(current)
         previous_values = values(previous)
+        sequential_values = values(previous_sequential)
+        quarter_window = []
+        if current.period_type == "quarter":
+            seen_quarters = set()
+            for period in sorted(
+                (
+                    item
+                    for item in periods
+                    if item.period_type == "quarter"
+                    and item.statement_scope == current.statement_scope
+                    and item.period_end <= current.period_end
+                ),
+                key=lambda item: (
+                    item.period_end,
+                    item.statement_status == "amended",
+                    item.updated_at,
+                ),
+                reverse=True,
+            ):
+                key = (period.fiscal_year, period.fiscal_quarter)
+                if key not in seen_quarters:
+                    seen_quarters.add(key)
+                    quarter_window.append(values(period))
+                if len(quarter_window) == 4:
+                    break
+
+        def ttm(item_code: str) -> float | None:
+            values_for_item = [item.get(item_code) for item in quarter_window]
+            return (
+                sum(value for value in values_for_item if value is not None)
+                if len(values_for_item) == 4 and all(value is not None for value in values_for_item)
+                else None
+            )
         with_price = self.session.scalar(
             select(PriceObservation.close)
             .join(SecurityRecord, PriceObservation.security_id == SecurityRecord.id)
@@ -598,23 +993,41 @@ class FinancialRepository:
             .order_by(PriceObservation.market_timestamp.desc())
         )
         inputs = FinancialInputs(
+            entity_type=_entity_type(security),
             revenue=current_values.get("revenue"),
             prior_revenue=previous_values.get("revenue"),
+            previous_period_revenue=sequential_values.get("revenue"),
+            ttm_revenue=ttm("revenue"),
             net_income=current_values.get("net_income"),
+            net_income_attributable_to_parent=current_values.get(
+                "net_income_attributable_to_parent"
+            ),
             prior_net_income=previous_values.get("net_income"),
+            previous_period_net_income=sequential_values.get("net_income"),
+            ttm_net_income=ttm("net_income"),
+            period_months=3 if current.period_type == "quarter" else 12,
             total_assets=current_values.get("total_assets"),
             prior_total_assets=previous_values.get("total_assets"),
             total_equity=current_values.get("total_equity"),
             prior_total_equity=previous_values.get("total_equity"),
             total_debt=current_values.get("total_debt"),
+            prior_total_debt=previous_values.get("total_debt"),
+            cash_and_equivalents=current_values.get("cash_and_equivalents"),
+            prior_cash_and_equivalents=previous_values.get("cash_and_equivalents"),
             current_assets=current_values.get("current_assets"),
+            inventory=current_values.get("inventory"),
             current_liabilities=current_values.get("current_liabilities"),
             operating_income=current_values.get("operating_income"),
+            profit_before_tax=current_values.get("profit_before_tax"),
+            tax_expense=current_values.get("tax_expense"),
             gross_profit=current_values.get("gross_profit"),
             interest_expense=current_values.get("interest_expense"),
             operating_cash_flow=current_values.get("operating_cash_flow"),
+            ttm_operating_cash_flow=ttm("operating_cash_flow"),
             capital_expenditure=current_values.get("capital_expenditure"),
+            ttm_capital_expenditure=ttm("capital_expenditure"),
             shares_outstanding=current_values.get("shares_outstanding"),
+            diluted_shares_outstanding=current_values.get("weighted_average_shares"),
             market_price=float(with_price) if with_price is not None else None,
             enterprise_value=current_values.get("enterprise_value"),
             ebitda=current_values.get("ebitda"),
@@ -647,6 +1060,10 @@ class FinancialRepository:
                 metric.source_name = current.source_name
                 metric.calculated_at = calculated_at
         self.session.commit()
+        metric_metadata = {
+            code: metadata.model_copy(update={"as_of_date": current.period_end})
+            for code, metadata in result.metric_metadata.items()
+        }
         return result.model_copy(
             update={
                 "symbol": security.symbol,
@@ -655,6 +1072,7 @@ class FinancialRepository:
                 "source_name": current.source_name,
                 "statement_scope": current.statement_scope,
                 "statement_status": current.statement_status,
+                "metric_metadata": metric_metadata,
             }
         )
 
@@ -688,6 +1106,21 @@ class FinancialRepository:
                 .order_by(FinancialPeriodRecord.period_end.asc())
             )
         )
+        latest_versions: dict[tuple[datetime, str, str], FinancialPeriodRecord] = {}
+        for period in periods:
+            key = (period.period_end, period.period_type, period.statement_scope)
+            current = latest_versions.get(key)
+            if current is None or (
+                period.statement_status == "amended",
+                period.verification_status == "verified",
+                period.updated_at,
+            ) > (
+                current.statement_status == "amended",
+                current.verification_status == "verified",
+                current.updated_at,
+            ):
+                latest_versions[key] = period
+        periods = sorted(latest_versions.values(), key=lambda item: item.period_end)
         if not periods:
             raise LookupError(
                 f"Chưa có BCTC {statement_scope}/{period_type} cho {security.symbol}."
@@ -705,33 +1138,74 @@ class FinancialRepository:
 
         selected = periods[-limit:]
         results = []
-        for period in selected:
+        for period_index, period in enumerate(selected):
             previous = comparable_financial_period(periods, period)
+            previous_sequential = selected[period_index - 1] if period_index > 0 else None
             current_values = values(period)
             previous_values = values(previous)
+            sequential_values = values(previous_sequential)
+            quarter_periods = selected[max(0, period_index - 3) : period_index + 1]
+            quarter_values = [values(item) for item in quarter_periods]
+
+            def ttm(
+                item_code: str,
+                quarter_values=quarter_values,
+                period_type=period.period_type,
+            ) -> float | None:
+                items = [item.get(item_code) for item in quarter_values]
+                return (
+                    sum(value for value in items if value is not None)
+                    if period_type == "quarter"
+                    and len(items) == 4
+                    and all(value is not None for value in items)
+                    else None
+                )
+
             calculated = calculate_financial_metrics(
                 FinancialInputs(
+                    entity_type=_entity_type(security),
                     revenue=current_values.get("revenue"),
                     prior_revenue=previous_values.get("revenue"),
+                    previous_period_revenue=sequential_values.get("revenue"),
+                    ttm_revenue=ttm("revenue"),
                     net_income=current_values.get("net_income"),
+                    net_income_attributable_to_parent=current_values.get(
+                        "net_income_attributable_to_parent"
+                    ),
                     prior_net_income=previous_values.get("net_income"),
+                    previous_period_net_income=sequential_values.get("net_income"),
+                    ttm_net_income=ttm("net_income"),
+                    period_months=3 if period.period_type == "quarter" else 12,
                     total_assets=current_values.get("total_assets"),
                     prior_total_assets=previous_values.get("total_assets"),
                     total_equity=current_values.get("total_equity"),
                     prior_total_equity=previous_values.get("total_equity"),
                     total_debt=current_values.get("total_debt"),
+                    prior_total_debt=previous_values.get("total_debt"),
+                    cash_and_equivalents=current_values.get("cash_and_equivalents"),
+                    prior_cash_and_equivalents=previous_values.get("cash_and_equivalents"),
                     current_assets=current_values.get("current_assets"),
+                    inventory=current_values.get("inventory"),
                     current_liabilities=current_values.get("current_liabilities"),
                     operating_income=current_values.get("operating_income"),
+                    profit_before_tax=current_values.get("profit_before_tax"),
+                    tax_expense=current_values.get("tax_expense"),
                     gross_profit=current_values.get("gross_profit"),
                     interest_expense=current_values.get("interest_expense"),
                     operating_cash_flow=current_values.get("operating_cash_flow"),
+                    ttm_operating_cash_flow=ttm("operating_cash_flow"),
                     capital_expenditure=current_values.get("capital_expenditure"),
+                    ttm_capital_expenditure=ttm("capital_expenditure"),
                     shares_outstanding=current_values.get("shares_outstanding"),
+                    diluted_shares_outstanding=current_values.get("weighted_average_shares"),
                     enterprise_value=current_values.get("enterprise_value"),
                     ebitda=current_values.get("ebitda"),
                 )
             )
+            metric_metadata = {
+                code: metadata.model_copy(update={"as_of_date": period.period_end})
+                for code, metadata in calculated.metric_metadata.items()
+            }
             results.append(
                 calculated.model_copy(
                     update={
@@ -741,6 +1215,7 @@ class FinancialRepository:
                         "source_name": period.source_name,
                         "statement_scope": period.statement_scope,
                         "statement_status": period.statement_status,
+                        "metric_metadata": metric_metadata,
                     }
                 )
             )

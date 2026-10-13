@@ -54,6 +54,32 @@ def test_normalization_sorts_and_deduplicates():
     assert result.provenance.validation_status == "valid"
 
 
+def test_normalization_records_conflicting_duplicate_and_allows_empty_incremental():
+    first = PriceBar(
+        timestamp=datetime(2025, 1, 2, tzinfo=UTC),
+        open=10,
+        high=12,
+        low=9,
+        close=11,
+        volume=10,
+    )
+    corrected = first.model_copy(update={"close": 11.5})
+    duplicate = normalize_price_series(series([first, corrected]))
+    assert duplicate.bars[-1].close == 11.5
+    assert "conflicting OHLCV" in duplicate.provenance.notes
+
+    empty = series([]).model_copy(
+        update={
+            "provenance": series([]).provenance.model_copy(
+                update={"market_timestamp": first.timestamp}
+            )
+        }
+    )
+    result = normalize_price_series(empty, allow_empty=True)
+    assert result.bars == []
+    assert result.provenance.market_timestamp == first.timestamp
+
+
 def test_csv_import_validates_rows_and_supports_aliases():
     content = """symbol,name,aliases,exchange,listing_status,provider_symbol
 AAA,Công ty Á Âu,A Au|Á Âu,HNX,active,AAA.VN

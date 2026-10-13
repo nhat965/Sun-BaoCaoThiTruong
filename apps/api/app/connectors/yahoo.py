@@ -86,6 +86,12 @@ class YahooFinanceConnector(MarketDataConnector):
             raise ConnectorError("Nguồn giá không trả về quan sát hợp lệ.")
         bars = bars[-max(30, min(limit, 520)) :]
         meta = result.get("meta", {})
+        response_currency = str(meta.get("currency") or "").upper()
+        if response_currency and response_currency != security.currency.upper():
+            raise ConnectorError(
+                f"Nguồn giá trả currency={response_currency}, khác securities master "
+                f"currency={security.currency.upper()}."
+            )
         return PriceSeries(
             security=security,
             interval="1d",
@@ -93,6 +99,7 @@ class YahooFinanceConnector(MarketDataConnector):
             bars=bars,
             provenance=Provenance(
                 source=self.name,
+                provider_id=self.provider_id,
                 source_url=str(response.url),
                 provider_symbol=provider_symbol,
                 retrieved_at=datetime.now(UTC),
@@ -101,6 +108,9 @@ class YahooFinanceConnector(MarketDataConnector):
                 delayed=True,
                 validation_status="partial",
                 adjustment_policy="unadjusted; corporate actions not independently verified",
+                coverage="security",
+                freshness="daily/delayed",
+                last_updated=datetime.now(UTC),
                 notes=(
                     f"currency={meta.get('currency', 'VND')}; "
                     f"exchangeTimezone={meta.get('exchangeTimezoneName', 'unknown')}"

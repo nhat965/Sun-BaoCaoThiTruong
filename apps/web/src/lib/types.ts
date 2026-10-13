@@ -57,6 +57,21 @@ export interface FinancialMetricResult {
   source_name: string | null;
   statement_scope: "consolidated" | "separate" | null;
   statement_status: "original" | "amended" | null;
+  metric_metadata: Record<string, FinancialMetricMetadata>;
+}
+
+export interface FinancialMetricMetadata {
+  metric_code: string;
+  value: number | null;
+  unit: string;
+  formula_version: string;
+  required_inputs: string[];
+  missing_inputs: string[];
+  input_status: "complete" | "incomplete" | "not_applicable";
+  applicable_company_types: string[];
+  period_policy: string;
+  limitations: string;
+  as_of_date: string | null;
 }
 
 export interface FinancialTrendResponse {
@@ -180,8 +195,13 @@ export interface SecuritiesExplorerItem {
   pe: number | null;
   pb: number | null;
   price_updated_at: string | null;
+  market_session_date: string | null;
+  price_retrieved_at: string | null;
   price_source: string | null;
   price_source_mode: string | null;
+  price_validation_status: string | null;
+  price_trust_status: "trusted" | "development_only" | "fixture" | null;
+  price_is_stale: boolean | null;
   registry_updated_at: string;
 }
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 class Provenance(BaseModel):
     source: str
+    provider_id: str | None = None
     source_url: str | None = None
     provider_symbol: str
     retrieved_at: datetime
@@ -14,6 +15,9 @@ class Provenance(BaseModel):
     delayed: bool = True
     validation_status: Literal["valid", "partial", "invalid"] = "valid"
     adjustment_policy: str = "unadjusted"
+    coverage: str = "security"
+    freshness: str = "unknown"
+    last_updated: datetime | None = None
     notes: str | None = None
 
 
@@ -40,6 +44,8 @@ class PriceBar(BaseModel):
     low: float
     close: float
     volume: int
+    actual_trading_value: float | None = None
+    market_cap: float | None = None
 
 
 class PriceSeries(BaseModel):
@@ -177,6 +183,16 @@ class DataQualityReport(BaseModel):
     )
     last_market_timestamp: datetime | None = None
     last_retrieval_timestamp: datetime | None = None
+    active_stock_count: int = 0
+    stocks_with_20_sessions: int = 0
+    stocks_with_50_sessions: int = 0
+    stocks_with_200_sessions: int = 0
+    stocks_with_market_cap: int = 0
+    stocks_with_foreign_flow: int = 0
+    universe_coverage_by_exchange: dict[str, dict[str, int | float]] = Field(
+        default_factory=dict
+    )
+    market_index_coverage: dict[str, int | float] = Field(default_factory=dict)
     sources: list[SourceDiagnostic]
     issues: list[str] = Field(default_factory=list)
 
@@ -203,8 +219,13 @@ class SecuritiesExplorerItem(BaseModel):
     pe: float | None = None
     pb: float | None = None
     price_updated_at: datetime | None = None
+    market_session_date: date | None = None
+    price_retrieved_at: datetime | None = None
     price_source: str | None = None
     price_source_mode: str | None = None
+    price_validation_status: str | None = None
+    price_trust_status: Literal["trusted", "development_only", "fixture"] | None = None
+    price_is_stale: bool | None = None
     registry_updated_at: datetime
 
 
@@ -243,26 +264,58 @@ class CorporateActionImportResult(BaseModel):
 class FinancialInputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    entity_type: Literal["non_financial", "bank", "securities", "insurance"] = (
+        "non_financial"
+    )
     revenue: float | None = None
     prior_revenue: float | None = None
+    previous_period_revenue: float | None = None
+    ttm_revenue: float | None = None
     net_income: float | None = None
+    net_income_attributable_to_parent: float | None = None
     prior_net_income: float | None = None
+    previous_period_net_income: float | None = None
+    ttm_net_income: float | None = None
+    period_months: int | None = Field(default=None, ge=1, le=12)
     total_assets: float | None = None
     prior_total_assets: float | None = None
     total_equity: float | None = None
     prior_total_equity: float | None = None
     total_debt: float | None = None
+    prior_total_debt: float | None = None
+    cash_and_equivalents: float | None = None
+    prior_cash_and_equivalents: float | None = None
     current_assets: float | None = None
+    inventory: float | None = None
     current_liabilities: float | None = None
     operating_income: float | None = None
+    profit_before_tax: float | None = None
+    tax_expense: float | None = None
     gross_profit: float | None = None
     interest_expense: float | None = None
     operating_cash_flow: float | None = None
+    ttm_operating_cash_flow: float | None = None
     capital_expenditure: float | None = None
+    ttm_capital_expenditure: float | None = None
     shares_outstanding: float | None = None
+    diluted_shares_outstanding: float | None = None
     market_price: float | None = None
     enterprise_value: float | None = None
     ebitda: float | None = None
+
+
+class FinancialMetricMetadata(BaseModel):
+    metric_code: str
+    value: float | None
+    unit: str
+    formula_version: str
+    required_inputs: list[str] = Field(default_factory=list)
+    missing_inputs: list[str] = Field(default_factory=list)
+    input_status: Literal["complete", "incomplete", "not_applicable"]
+    applicable_company_types: list[str] = Field(default_factory=list)
+    period_policy: str
+    limitations: str
+    as_of_date: datetime | None = None
 
 
 class FinancialMetricResult(BaseModel):
@@ -276,11 +329,12 @@ class FinancialMetricResult(BaseModel):
     source_name: str | None = None
     statement_scope: Literal["consolidated", "separate"] | None = None
     statement_status: Literal["original", "amended"] | None = None
+    metric_metadata: dict[str, FinancialMetricMetadata] = Field(default_factory=dict)
 
 
 class FinancialTrendResponse(BaseModel):
     symbol: str
-    period_type: Literal["quarter", "year", "ttm"]
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
     statement_scope: Literal["consolidated", "separate"]
     periods: list[FinancialMetricResult]
     warnings: list[str] = Field(default_factory=list)
@@ -294,11 +348,40 @@ class FinancialStatementImportResult(BaseModel):
     skipped_items: int = 0
     rejected: int
     errors: list[str]
+    validation_reports: list["FinancialValidationReport"] = Field(default_factory=list)
+
+
+class FinancialValidationIssue(BaseModel):
+    code: str
+    severity: Literal["warning", "error"]
+    message: str
+    item_code: str | None = None
+    source_name: str | None = None
+
+
+class FinancialValidationReport(BaseModel):
+    symbol: str
+    period_end: datetime
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
+    statement_scope: Literal["consolidated", "separate"]
+    statement_status: Literal["original", "amended"]
+    source_name: str
+    source_url: str | None = None
+    checks: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    validation_status: Literal[
+        "valid", "warning", "invalid", "insufficient_data", "rejected"
+    ]
+    issues: list[FinancialValidationIssue] = Field(default_factory=list)
+    created_at: datetime
 
 
 class FinancialStatementItem(BaseModel):
     statement_type: Literal["income", "balance", "cash_flow"]
     item_code: str
+    raw_item_code: str | None = None
+    mapping_version: str = "financial-map-v1"
     value: float
     unit: str
     raw_value: float | None = None
@@ -310,17 +393,23 @@ class FinancialStatementItem(BaseModel):
 
 
 class FinancialStatementPeriod(BaseModel):
+    period_start: datetime | None = None
     period_end: datetime
-    period_type: Literal["quarter", "year", "ttm"]
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
     fiscal_year: int
     fiscal_quarter: int | None = None
     reported_at: datetime | None = None
     statement_scope: Literal["consolidated", "separate"]
     statement_status: Literal["original", "amended"]
+    accounting_standard: str = "unknown"
     currency: str
     source_name: str
     source_url: str | None = None
     verification_status: Literal["verified", "unverified", "rejected"]
+    retrieved_at: datetime | None = None
+    validated_at: datetime | None = None
+    data_version: str = "financial-v1"
+    content_hash: str | None = None
     updated_at: datetime
     items: list[FinancialStatementItem]
 
@@ -526,6 +615,30 @@ class MarketIndexObservation(BaseModel):
     change_percent: float | None = None
     market_timestamp: datetime
     source: str
+    provider: str | None = None
+    source_url: str | None = None
+    market_session: str | None = None
+    retrieved_at: datetime | None = None
+    last_updated: datetime | None = None
+    data_mode: Literal[
+        "live", "delayed", "historical", "stale", "fixture", "unavailable"
+    ] = "unavailable"
+    validation_status: Literal["valid", "partial", "unvalidated", "invalid"] = "unvalidated"
+    coverage: str = "index"
+    freshness: str = "unknown"
+    adjustment_policy: str = "unknown"
+
+
+class MarketIndicesResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    indices: list[MarketIndexObservation] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-foundation-v1"
 
 
 class MarketOverview(BaseModel):

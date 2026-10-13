@@ -70,6 +70,8 @@ def test_registry_search_without_diacritics_and_fundamental_calculator():
         )
         assert result.status_code == 200
         assert result.json()["metrics"]["roe_percent"] == 20
+        assert result.json()["formula_version"] == "fundamental-v3"
+        assert result.json()["metric_metadata"]["roe_percent"]["input_status"] == "complete"
 
 
 def test_fireant_status_is_honestly_blocked_without_token():

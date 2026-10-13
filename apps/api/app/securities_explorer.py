@@ -6,10 +6,10 @@ from sqlalchemy import and_, case, func, or_, select
 
 from app.database import (
     FinancialMetricRecord,
-    PriceObservation,
     SecurityRecord,
     SessionLocal,
 )
+from app.price_integrity import canonical_daily_prices
 from app.schemas import SecuritiesExplorerItem, SecuritiesExplorerResponse
 from app.text import normalize_vietnamese
 
@@ -45,30 +45,10 @@ def list_securities(
     sort_by: SecuritiesSort = "symbol",
     sort_order: SortOrder = "asc",
 ) -> SecuritiesExplorerResponse:
-    ranked_prices = (
-        select(
-            PriceObservation.security_id.label("security_id"),
-            PriceObservation.close.label("close"),
-            PriceObservation.volume.label("volume"),
-            PriceObservation.market_timestamp.label("market_timestamp"),
-            PriceObservation.provider.label("provider"),
-            PriceObservation.source_mode.label("source_mode"),
-            func.row_number()
-            .over(
-                partition_by=PriceObservation.security_id,
-                order_by=(
-                    PriceObservation.market_timestamp.desc(),
-                    PriceObservation.id.desc(),
-                ),
-            )
-            .label("price_rank"),
-        )
-        .where(PriceObservation.validation_status != "invalid")
-        .subquery()
-    )
+    ranked_prices = canonical_daily_prices()
     latest = (
         select(ranked_prices)
-        .where(ranked_prices.c.price_rank == 1)
+        .where(ranked_prices.c.session_rank == 1)
         .subquery("latest_price")
     )
     previous = (
@@ -76,7 +56,7 @@ def list_securities(
             ranked_prices.c.security_id,
             ranked_prices.c.close.label("previous_close"),
         )
-        .where(ranked_prices.c.price_rank == 2)
+        .where(ranked_prices.c.session_rank == 2)
         .subquery("previous_price")
     )
     change_percent = case(
@@ -124,8 +104,12 @@ def list_securities(
             latest.c.close,
             latest.c.volume,
             latest.c.market_timestamp,
+            latest.c.market_session_date,
+            latest.c.retrieved_at,
             latest.c.provider,
+            latest.c.provider_id,
             latest.c.source_mode,
+            latest.c.validation_status,
             change_percent,
             trading_value,
             pe,
@@ -168,6 +152,7 @@ def list_securities(
             )
         )
 
+    generated_at = datetime.now(UTC)
     items = [
         SecuritiesExplorerItem(
             symbol=row.SecurityRecord.symbol,
@@ -184,8 +169,25 @@ def list_securities(
             pe=float(row.pe) if row.pe is not None else None,
             pb=float(row.pb) if row.pb is not None else None,
             price_updated_at=row.market_timestamp,
+            market_session_date=row.market_session_date,
+            price_retrieved_at=row.retrieved_at,
             price_source=row.provider,
             price_source_mode=row.source_mode,
+            price_validation_status=row.validation_status,
+            price_trust_status=(
+                "fixture"
+                if row.provider_id == "fixture"
+                else "development_only"
+                if row.provider_id == "yahoo"
+                else "trusted"
+            )
+            if row.provider_id
+            else None,
+            price_is_stale=(
+                (generated_at.date() - row.market_session_date).days > 7
+                if row.market_session_date is not None
+                else None
+            ),
             registry_updated_at=row.SecurityRecord.last_updated,
         )
         for row in rows
@@ -199,5 +201,5 @@ def list_securities(
         available_exchanges=exchanges,
         available_sectors=sectors,
         available_listing_statuses=statuses,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at,
     )

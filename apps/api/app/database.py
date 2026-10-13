@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -51,13 +52,23 @@ class PriceObservation(Base):
         UniqueConstraint(
             "security_id", "provider", "market_timestamp", "interval", name="uq_price_point"
         ),
+        UniqueConstraint(
+            "security_id",
+            "provider_id",
+            "market_session_date",
+            "interval",
+            "adjusted",
+            name="uq_price_provider_session",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
     provider: Mapped[str] = mapped_column(String(64), index=True)
+    provider_id: Mapped[str] = mapped_column(String(64), default="unknown", index=True)
     provider_symbol: Mapped[str] = mapped_column(String(32))
     market_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     interval: Mapped[str] = mapped_column(String(16))
     open: Mapped[Decimal] = mapped_column(Numeric(20, 6))
@@ -65,14 +76,53 @@ class PriceObservation(Base):
     low: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     close: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     volume: Mapped[int] = mapped_column(BigInteger)
+    actual_trading_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 6), nullable=True
+    )
+    market_cap: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="VND")
     adjusted: Mapped[bool] = mapped_column(Boolean, default=False)
     validation_status: Mapped[str] = mapped_column(String(24), default="valid")
     adjustment_policy: Mapped[str] = mapped_column(String(64), default="unadjusted")
     quality_flags_json: Mapped[str] = mapped_column(Text, default="[]")
     source_mode: Mapped[str] = mapped_column(String(16), default="unknown")
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    coverage: Mapped[str] = mapped_column(String(32), default="security")
+    freshness: Mapped[str] = mapped_column(String(32), default="unknown")
+    last_updated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     security: Mapped[SecurityRecord] = relationship(back_populates="prices")
+
+
+class MarketIndexObservationRecord(Base):
+    __tablename__ = "market_index_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "provider_id",
+            "market_session_date",
+            name="uq_market_index_provider_session",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    exchange: Mapped[str] = mapped_column(String(32), index=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    market_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    previous_close: Mapped[Decimal | None] = mapped_column(Numeric(20, 6), nullable=True)
+    provider: Mapped[str] = mapped_column(String(128), index=True)
+    provider_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage: Mapped[str] = mapped_column(String(32), default="index")
+    freshness: Mapped[str] = mapped_column(String(32), default="unknown")
+    adjustment_policy: Mapped[str] = mapped_column(String(128), default="unknown")
 
 
 class AnalysisRun(Base):
@@ -133,12 +183,14 @@ class FinancialPeriodRecord(Base):
             "period_end",
             "period_type",
             "statement_scope",
+            "statement_status",
             name="uq_financial_period_scope",
         ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     period_type: Mapped[str] = mapped_column(String(16), index=True)
     fiscal_year: Mapped[int] = mapped_column(Integer)
@@ -149,8 +201,13 @@ class FinancialPeriodRecord(Base):
     verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
     statement_scope: Mapped[str] = mapped_column(String(24), default="consolidated")
     statement_status: Mapped[str] = mapped_column(String(24), default="original")
+    accounting_standard: Mapped[str] = mapped_column(String(32), default="unknown")
     unit: Mapped[str] = mapped_column(String(32), default="VND")
     currency: Mapped[str] = mapped_column(String(8), default="VND")
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    data_version: Mapped[str] = mapped_column(String(32), default="financial-v1")
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -162,6 +219,8 @@ class FinancialStatementItemRecord(Base):
     period_id: Mapped[int] = mapped_column(ForeignKey("financial_periods.id"), index=True)
     statement_type: Mapped[str] = mapped_column(String(24), index=True)
     item_code: Mapped[str] = mapped_column(String(64), index=True)
+    raw_item_code: Mapped[str | None] = mapped_column(String(128))
+    mapping_version: Mapped[str] = mapped_column(String(32), default="financial-map-v1")
     value: Mapped[Decimal] = mapped_column(Numeric(28, 6))
     unit: Mapped[str] = mapped_column(String(32), default="VND")
     raw_value: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
@@ -170,6 +229,28 @@ class FinancialStatementItemRecord(Base):
     source_url: Mapped[str | None] = mapped_column(String(1024))
     verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FinancialValidationReportRecord(Base):
+    __tablename__ = "financial_validation_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    period_id: Mapped[int | None] = mapped_column(
+        ForeignKey("financial_periods.id"), nullable=True, index=True
+    )
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    period_type: Mapped[str] = mapped_column(String(16))
+    statement_scope: Mapped[str] = mapped_column(String(24))
+    statement_status: Mapped[str] = mapped_column(String(24))
+    source_name: Mapped[str] = mapped_column(String(128))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    issues_json: Mapped[str] = mapped_column(Text, default="[]")
+    errors_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    validation_status: Mapped[str] = mapped_column(String(24), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class FinancialMetricRecord(Base):

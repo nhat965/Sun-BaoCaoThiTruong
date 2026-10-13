@@ -5,6 +5,7 @@
 | Existing MVP flow | DONE | Search → prices → analysis → chart → news metadata → PDF retained. |
 | Securities master | PARTIAL | Database registry, Vietnamese aliases, provider IDs and authorized CSV/XLSX incremental import implemented; bundled bootstrap is not full-market coverage. |
 | Securities Explorer | DONE | Server-side search/filter/sort/pagination, facets, nullable price/fundamental fields, responsive table/cards, local pinning and analysis navigation verified. |
+| Market data foundation (PR-A) | PARTIAL | Additive migration `0017`, canonical provider/session deduplication, Vietnam timezone/weekend semantics, index provenance API/import and history-depth coverage diagnostics implemented. Authorized index feed, official holiday calendar, market cap and foreign-flow data remain blocked. |
 | Source provenance | DONE | Price records include source, URL, retrieval/market timestamps, freshness, validation and adjustment policy. |
 | OHLCV normalization/storage | DONE | Sort, deduplicate, reject invalid bars, initial/incremental cursors and idempotent upsert implemented; live HPG/FPT repeat-sync verified. |
 | Provider orchestration | PARTIAL | Explicit seven-capability matrix, priority/failover loop, process-local circuit breaker and persisted sync runs/errors implemented; only Yahoo price provider currently operational. |

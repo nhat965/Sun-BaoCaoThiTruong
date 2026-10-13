@@ -139,6 +139,44 @@ def test_financial_import_normalizes_units_and_protects_verified_values():
         app.dependency_overrides.clear()
 
 
+def test_financial_import_persists_canonical_period_and_mapping_metadata():
+    app.dependency_overrides[get_settings] = _settings
+    try:
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/v1/securities/import",
+                headers=_headers() | {"X-Source-Name": "authorized-registry"},
+                content="symbol,name,exchange\nFVA,Financial V2 Acceptance,HOSE\n",
+            )
+            assert created.status_code == 200
+            csv = (
+                "period_end,period_type,fiscal_year,fiscal_quarter,period_start,"
+                "statement_type,item_code,value,unit,accounting_standard,retrieved_at,"
+                "source_url\n"
+                "2025-09-30T00:00:00+00:00,quý,2025,3,2025-07-01T00:00:00+00:00,"
+                "income,Doanh thu thuần,100,MILLION_VND,VAS,"
+                "2025-10-05T00:00:00+00:00,https://example.com/fva\n"
+            )
+            imported = client.post(
+                "/api/v1/stocks/FVA/financials/import",
+                headers=_headers() | {"X-Source-Name": "authorized-bctc"},
+                content=csv,
+            )
+            assert imported.status_code == 200
+            statements = client.get("/api/v1/stocks/FVA/financial-statements")
+            payload = statements.json()["periods"][0]
+            assert payload["period_type"] == "quarter"
+            assert payload["period_start"].startswith("2025-07-01")
+            assert payload["accounting_standard"] == "vas"
+            assert payload["retrieved_at"].startswith("2025-10-05")
+            assert len(payload["content_hash"]) == 64
+            assert payload["items"][0]["item_code"] == "revenue"
+            assert payload["items"][0]["raw_item_code"] == "Doanh thu thuần"
+            assert payload["items"][0]["mapping_version"] == "financial-map-v1"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_automatic_financial_sync_records_blocked_state_and_quality_error():
     app.dependency_overrides[get_settings] = _settings
     try:
@@ -159,9 +197,6 @@ def test_automatic_financial_sync_records_blocked_state_and_quality_error():
 
 
 def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
-    import httpx
-
-
     csv_data = (
         "period_end,period_type,fiscal_year,statement_type,item_code,value,unit,"
         "verification_status,statement_scope,source_url\n"
@@ -169,22 +204,22 @@ def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
         "verified,consolidated,https://licensed.example/report\n"
     )
     calls = []
-    original_get = httpx.Client.get
     sync_admin_token = "licensed-financial-sync-test-token-long-enough"
 
-    def fake_get(self, url, **kwargs):
-        if not str(url).startswith("https://licensed.example/"):
-            return original_get(self, url, **kwargs)
+    def fake_fetch(url, **kwargs):
         calls.append((url, kwargs))
-        return httpx.Response(
-            200, content=csv_data.encode(), request=httpx.Request("GET", url)
-        )
+        return csv_data
 
-    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    monkeypatch.setattr("app.data_pipeline.fetch_authorized_csv", fake_fetch)
+    monkeypatch.setattr(
+        "app.data_pipeline.validate_https_destination",
+        lambda url, allowed_hosts: "licensed.example",
+    )
     app.dependency_overrides[get_settings] = lambda: Settings(
         market_data_mode="fixture", admin_api_token=sync_admin_token,
         admin_rate_limit_per_minute=1000,
         financial_csv_url_template="https://licensed.example/{symbol}.csv",
+        financial_csv_allowed_hosts="licensed.example",
         financial_csv_bearer_token="test-only-token",
         financial_csv_rights_confirmed=True,
     )
@@ -197,9 +232,10 @@ def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
             second = client.post("/api/v1/sync/financials/HPG", headers={"Authorization": f"Bearer {sync_admin_token}"})
             assert second.status_code == 200
             assert second.json()["inserted_count"] == 0
-            assert second.json()["updated_count"] == 1
+            assert second.json()["updated_count"] == 0
+            assert second.json()["skipped_count"] == 1
             assert all(url == "https://licensed.example/HPG.csv" for url, _ in calls)
-            assert calls[0][1]["headers"]["Authorization"] == "Bearer test-only-token"
+            assert calls[0][1]["bearer_token"] == "test-only-token"
             stored = client.get("/api/v1/stocks/HPG/financial-statements")
             assert stored.status_code == 200
             assert any(
@@ -213,12 +249,10 @@ def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
 
 
 def test_financial_sync_requires_rights_and_safe_url(monkeypatch):
-    import httpx
-
-    def unexpected_request(self, url, **kwargs):
+    def unexpected_request(url, **kwargs):
         raise AssertionError("Source must not be contacted without permission")
 
-    monkeypatch.setattr(httpx.Client, "get", unexpected_request)
+    monkeypatch.setattr("app.data_pipeline.fetch_authorized_csv", unexpected_request)
     sync_admin_token = "licensed-financial-permission-test-token-long-enough"
     for url, confirmed in (
         ("https://licensed.example/{symbol}.csv", False),
@@ -229,6 +263,7 @@ def test_financial_sync_requires_rights_and_safe_url(monkeypatch):
             market_data_mode="fixture", admin_api_token=sync_admin_token,
             admin_rate_limit_per_minute=1000,
             financial_csv_url_template=url,
+            financial_csv_allowed_hosts="licensed.example",
             financial_csv_rights_confirmed=confirmed,
         )
         try:

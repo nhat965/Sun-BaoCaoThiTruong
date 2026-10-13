@@ -5,7 +5,10 @@ import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResul
 import { PriceChart } from "./PriceChart";
 import { SecuritiesExplorer } from "./SecuritiesExplorer";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+// Use the same-origin proxy by default so Codex/in-app browsers do not need to
+// make a cross-origin request to the backend port. Set NEXT_PUBLIC_API_BASE_URL
+// only when the frontend is intentionally served independently.
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1";
 const money = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
 const statementItems = [
@@ -18,6 +21,24 @@ const statementItems = [
   ["operating_cash_flow", "Lưu chuyển tiền HĐKD"],
   ["investing_cash_flow", "Dòng tiền đầu tư"],
   ["financing_cash_flow", "Dòng tiền tài chính"],
+  ["inventory", "Hàng tồn kho"],
+  ["capital_expenditure", "Chi đầu tư tài sản"],
+] as const;
+
+const fundamentalCards = [
+  ["Doanh thu tăng trưởng", "revenue_growth_percent", "%", "Tăng trưởng cùng kỳ; cần kỳ so sánh dương."],
+  ["Lợi nhuận tăng trưởng", "net_income_growth_percent", "%", "Tăng trưởng lợi nhuận sau thuế so với kỳ gốc."],
+  ["ROE", "roe_percent", "%", "Lợi nhuận trên vốn chủ bình quân."],
+  ["ROA", "roa_percent", "%", "Lợi nhuận trên tổng tài sản bình quân."],
+  ["Biên gộp", "gross_margin_percent", "%", "Lợi nhuận gộp trên doanh thu; không áp dụng cho ngân hàng."],
+  ["Biên ròng", "net_margin_percent", "%", "Lợi nhuận sau thuế trên doanh thu."],
+  ["ROIC", "roic_percent", "%", "NOPAT trên vốn đầu tư bình quân, cần đầu vào thuế và nợ."],
+  ["D/E", "debt_to_equity", "x", "Nợ trên vốn chủ sở hữu."],
+  ["Quick ratio", "quick_ratio", "x", "Tài sản ngắn hạn trừ tồn kho trên nợ ngắn hạn."],
+  ["Dòng tiền tự do", "free_cash_flow", "", "Dòng tiền HĐKD trừ CAPEX đã chuẩn hóa dấu."],
+  ["Chuyển đổi tiền mặt", "cash_conversion_percent", "%", "Dòng tiền HĐKD trên lợi nhuận sau thuế."],
+  ["EPS", "eps", "", "Ưu tiên lợi nhuận cổ đông công ty mẹ và cổ phiếu pha loãng."],
+  ["P/E", "pe", "x", "Giá thị trường trên EPS; để trống khi EPS không hợp lệ."],
 ] as const;
 
 function formatDate(value: string | null) {
@@ -224,7 +245,7 @@ export function Dashboard() {
 
       <section className="fundamental-section">
         <div className="section-head"><div><p className="eyebrow">Phân tích cơ bản</p><h2>BCTC đã lưu trong hệ thống</h2></div><p>{fundamentals ? `Kỳ ${fundamentals.period_type ?? "không xác định"} · ${fundamentals.statement_scope === "separate" ? "riêng lẻ" : "hợp nhất"} · ${fundamentals.statement_status === "amended" ? "đã điều chỉnh" : "bản gốc"} · ${formatDate(fundamentals.period_end)} · nguồn ${fundamentals.source_name ?? "không rõ"}` : "Chưa có BCTC hợp lệ được kết nối cho mã này."}</p></div>
-        {fundamentals ? <><div className="metric-grid">{[["Doanh thu tăng trưởng", "revenue_growth_percent", "%"], ["Lợi nhuận tăng trưởng", "net_income_growth_percent", "%"], ["ROE", "roe_percent", "%"], ["ROA", "roa_percent", "%"], ["Biên ròng", "net_margin_percent", "%"], ["D/E", "debt_to_equity", "x"], ["Current ratio", "current_ratio", "x"], ["EPS", "eps", ""], ["P/E", "pe", "x"]].map(([label, key, suffix]) => <article key={key}><span>{label}</span><strong>{fundamentals.metrics[key] === null || fundamentals.metrics[key] === undefined ? "—" : `${decimal.format(fundamentals.metrics[key] as number)}${suffix}`}</strong></article>)}</div><ul className="metric-warnings">{fundamentals.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></> : <div className="empty">Hãy nạp CSV BCTC được cấp phép qua endpoint quản trị để bật phân tích theo quý/năm. Không suy đoán số liệu còn thiếu.</div>}
+        {fundamentals ? <><div className="metric-grid">{fundamentalCards.map(([label, key, suffix, explanation]) => { const metadata = fundamentals.metric_metadata?.[key]; const value = fundamentals.metrics[key]; const unavailable = value === null || value === undefined; return <article key={key} title={metadata?.limitations ?? explanation}><span>{label}</span><strong>{unavailable ? "Chưa có dữ liệu" : `${decimal.format(value as number)}${suffix}`}</strong><small>{metadata?.input_status === "not_applicable" ? "Không áp dụng" : metadata?.input_status === "incomplete" ? `Thiếu: ${metadata.missing_inputs.join(", ")}` : explanation}</small></article>; })}</div><div className="metric-provenance"><span>Công thức {fundamentals.formula_version}</span><span>Tính lúc {formatDate(fundamentals.calculated_at)}</span><span>Kỳ dữ liệu {formatDate(fundamentals.period_end)}</span><span>Nguồn {fundamentals.source_name ?? "không rõ"}</span></div><ul className="metric-warnings">{fundamentals.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></> : <div className="empty">Hãy nạp CSV BCTC được cấp phép qua endpoint quản trị để bật phân tích theo quý/năm. Không suy đoán số liệu còn thiếu.</div>}
         {financialStatements && <div className="statement-ledger">
           <div className="statement-ledger-head"><div><h3>Sổ BCTC chuẩn hóa</h3><p>{financialStatements.periods.length ? `${financialStatements.periods.length} kỳ gần nhất · giá trị chuẩn hóa giữ kèm đơn vị gốc.` : "Chưa có kỳ báo cáo nào được nhập."}</p></div><span className={`pipeline-state ${financialStatements.automatic_sync_status}`}>{financialStatements.automatic_sync_status === "available" ? "TỰ ĐỘNG" : "BLOCKED"}</span></div>
           {financialStatements.periods.length ? <div className="trend-scroll"><table><thead><tr><th>Chỉ tiêu</th>{financialStatements.periods.map((period) => <th key={`${period.period_end}-${period.statement_scope}`}>{period.period_type === "quarter" ? `Q${period.fiscal_quarter}/${period.fiscal_year}` : period.fiscal_year}<small>{period.statement_scope === "consolidated" ? "Hợp nhất" : "Riêng lẻ"}</small></th>)}</tr></thead><tbody>{statementItems.map(([code, label]) => <tr key={code}><td>{label}</td>{financialStatements.periods.map((period) => { const item = period.items.find((candidate) => candidate.item_code === code); return <td key={`${period.period_end}-${period.statement_scope}-${code}`}>{item ? <>{money.format(item.value)}<small>{item.unit} · {item.source_name}</small></> : <span className="missing-value">Chưa có dữ liệu</span>}</td>; })}</tr>)}</tbody></table></div> : <div className="empty">Chưa có BCTC được cấp phép. Có thể nhập file CSV hợp lệ qua API quản trị; hệ thống sẽ lưu kỳ, phạm vi, đơn vị, nguồn và trạng thái xác minh.</div>}

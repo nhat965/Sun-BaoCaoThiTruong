@@ -42,6 +42,7 @@ class FixtureConnector(MarketDataConnector):
             bars=bars,
             provenance=Provenance(
                 source=self.name,
+                provider_id=self.provider_id,
                 provider_symbol=f"{security.symbol}.FIXTURE",
                 retrieved_at=datetime.now(UTC),
                 market_timestamp=bars[-1].timestamp,
@@ -49,6 +50,9 @@ class FixtureConnector(MarketDataConnector):
                 delayed=True,
                 validation_status="valid",
                 adjustment_policy="synthetic-unadjusted",
+                coverage="security",
+                freshness="fixture",
+                last_updated=datetime.now(UTC),
                 notes="Dữ liệu tổng hợp xác định; không phải dữ liệu thị trường.",
             ),
         )
