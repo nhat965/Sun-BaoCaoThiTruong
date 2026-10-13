@@ -155,3 +155,78 @@ def test_automatic_financial_sync_records_blocked_state_and_quality_error():
             assert "symbols_with_financial_statements" in quality
     finally:
         app.dependency_overrides.clear()
+
+
+def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
+    import httpx
+
+    csv_data = (
+        "period_end,period_type,fiscal_year,statement_type,item_code,value,unit,"
+        "verification_status,statement_scope,source_url\n"
+        "2025-12-31T00:00:00+00:00,year,2025,income,revenue,123,MILLION_VND,"
+        "verified,consolidated,https://licensed.example/report\n"
+    )
+    calls = []
+
+    def fake_get(self, url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(
+            200, content=csv_data.encode(), request=httpx.Request("GET", url)
+        )
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        market_data_mode="fixture", admin_api_token=ADMIN_TOKEN,
+        admin_rate_limit_per_minute=1000,
+        financial_csv_url_template="https://licensed.example/{symbol}.csv",
+        financial_csv_bearer_token="test-only-token",
+        financial_csv_rights_confirmed=True,
+    )
+    try:
+        with TestClient(app) as client:
+            first = client.post("/api/v1/sync/financials/HPG", headers=_headers())
+            assert first.status_code == 200
+            assert first.json()["status"] == "SUCCESS"
+            assert first.json()["inserted_count"] == 1
+            second = client.post("/api/v1/sync/financials/HPG", headers=_headers())
+            assert second.status_code == 200
+            assert second.json()["inserted_count"] == 0
+            assert second.json()["updated_count"] == 1
+            assert all(url == "https://licensed.example/HPG.csv" for url, _ in calls)
+            assert calls[0][1]["headers"]["Authorization"] == "Bearer test-only-token"
+            stored = client.get("/api/v1/stocks/HPG/financial-statements")
+            assert stored.status_code == 200
+            assert any(
+                item["item_code"] == "revenue" and item["value"] == 123000000
+                for period in stored.json()["periods"]
+                for item in period["items"]
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_financial_sync_requires_rights_and_safe_url(monkeypatch):
+    import httpx
+
+    def unexpected_request(self, url, **kwargs):
+        raise AssertionError("Source must not be contacted without permission")
+
+    monkeypatch.setattr(httpx.Client, "get", unexpected_request)
+    for url, confirmed in (
+        ("https://licensed.example/{symbol}.csv", False),
+        ("http://licensed.example/{symbol}.csv", True),
+        ("https://user:secret@licensed.example/{symbol}.csv", True),
+    ):
+        app.dependency_overrides[get_settings] = lambda url=url, confirmed=confirmed: Settings(
+            market_data_mode="fixture", admin_api_token=ADMIN_TOKEN,
+            admin_rate_limit_per_minute=1000,
+            financial_csv_url_template=url,
+            financial_csv_rights_confirmed=confirmed,
+        )
+        try:
+            with TestClient(app) as client:
+                result = client.post("/api/v1/sync/financials/HPG", headers=_headers())
+                assert result.status_code == 200
+                assert result.json()["status"] == "BLOCKED"
+        finally:
+            app.dependency_overrides.clear()
