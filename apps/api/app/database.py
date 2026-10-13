@@ -151,6 +151,7 @@ class FinancialPeriodRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     security_id: Mapped[int] = mapped_column(ForeignKey("securities.id"), index=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     period_type: Mapped[str] = mapped_column(String(16), index=True)
     fiscal_year: Mapped[int] = mapped_column(Integer)
@@ -161,8 +162,13 @@ class FinancialPeriodRecord(Base):
     verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
     statement_scope: Mapped[str] = mapped_column(String(24), default="consolidated")
     statement_status: Mapped[str] = mapped_column(String(24), default="original")
+    accounting_standard: Mapped[str] = mapped_column(String(32), default="unknown")
     unit: Mapped[str] = mapped_column(String(32), default="VND")
     currency: Mapped[str] = mapped_column(String(8), default="VND")
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    data_version: Mapped[str] = mapped_column(String(32), default="financial-v1")
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -174,6 +180,8 @@ class FinancialStatementItemRecord(Base):
     period_id: Mapped[int] = mapped_column(ForeignKey("financial_periods.id"), index=True)
     statement_type: Mapped[str] = mapped_column(String(24), index=True)
     item_code: Mapped[str] = mapped_column(String(64), index=True)
+    raw_item_code: Mapped[str | None] = mapped_column(String(128))
+    mapping_version: Mapped[str] = mapped_column(String(32), default="financial-map-v1")
     value: Mapped[Decimal] = mapped_column(Numeric(28, 6))
     unit: Mapped[str] = mapped_column(String(32), default="VND")
     raw_value: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)

@@ -139,6 +139,44 @@ def test_financial_import_normalizes_units_and_protects_verified_values():
         app.dependency_overrides.clear()
 
 
+def test_financial_import_persists_canonical_period_and_mapping_metadata():
+    app.dependency_overrides[get_settings] = _settings
+    try:
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/v1/securities/import",
+                headers=_headers() | {"X-Source-Name": "authorized-registry"},
+                content="symbol,name,exchange\nFVA,Financial V2 Acceptance,HOSE\n",
+            )
+            assert created.status_code == 200
+            csv = (
+                "period_end,period_type,fiscal_year,fiscal_quarter,period_start,"
+                "statement_type,item_code,value,unit,accounting_standard,retrieved_at,"
+                "source_url\n"
+                "2025-09-30T00:00:00+00:00,quý,2025,3,2025-07-01T00:00:00+00:00,"
+                "income,Doanh thu thuần,100,MILLION_VND,VAS,"
+                "2025-10-05T00:00:00+00:00,https://example.com/fva\n"
+            )
+            imported = client.post(
+                "/api/v1/stocks/FVA/financials/import",
+                headers=_headers() | {"X-Source-Name": "authorized-bctc"},
+                content=csv,
+            )
+            assert imported.status_code == 200
+            statements = client.get("/api/v1/stocks/FVA/financial-statements")
+            payload = statements.json()["periods"][0]
+            assert payload["period_type"] == "quarter"
+            assert payload["period_start"].startswith("2025-07-01")
+            assert payload["accounting_standard"] == "vas"
+            assert payload["retrieved_at"].startswith("2025-10-05")
+            assert len(payload["content_hash"]) == 64
+            assert payload["items"][0]["item_code"] == "revenue"
+            assert payload["items"][0]["raw_item_code"] == "Doanh thu thuần"
+            assert payload["items"][0]["mapping_version"] == "financial-map-v1"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_automatic_financial_sync_records_blocked_state_and_quality_error():
     app.dependency_overrides[get_settings] = _settings
     try:

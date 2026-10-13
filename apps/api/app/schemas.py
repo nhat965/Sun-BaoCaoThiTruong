@@ -301,7 +301,7 @@ class FinancialMetricResult(BaseModel):
 
 class FinancialTrendResponse(BaseModel):
     symbol: str
-    period_type: Literal["quarter", "year", "ttm"]
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
     statement_scope: Literal["consolidated", "separate"]
     periods: list[FinancialMetricResult]
     warnings: list[str] = Field(default_factory=list)
@@ -321,7 +321,7 @@ class FinancialStatementImportResult(BaseModel):
 class FinancialValidationReport(BaseModel):
     symbol: str
     period_end: datetime
-    period_type: Literal["quarter", "year", "ttm"]
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
     statement_scope: Literal["consolidated", "separate"]
     statement_status: Literal["original", "amended"]
     source_name: str
@@ -336,6 +336,8 @@ class FinancialValidationReport(BaseModel):
 class FinancialStatementItem(BaseModel):
     statement_type: Literal["income", "balance", "cash_flow"]
     item_code: str
+    raw_item_code: str | None = None
+    mapping_version: str = "financial-map-v1"
     value: float
     unit: str
     raw_value: float | None = None
@@ -347,17 +349,23 @@ class FinancialStatementItem(BaseModel):
 
 
 class FinancialStatementPeriod(BaseModel):
+    period_start: datetime | None = None
     period_end: datetime
-    period_type: Literal["quarter", "year", "ttm"]
+    period_type: Literal["quarter", "year", "ytd", "ttm"]
     fiscal_year: int
     fiscal_quarter: int | None = None
     reported_at: datetime | None = None
     statement_scope: Literal["consolidated", "separate"]
     statement_status: Literal["original", "amended"]
+    accounting_standard: str = "unknown"
     currency: str
     source_name: str
     source_url: str | None = None
     verification_status: Literal["verified", "unverified", "rejected"]
+    retrieved_at: datetime | None = None
+    validated_at: datetime | None = None
+    data_version: str = "financial-v1"
+    content_hash: str | None = None
     updated_at: datetime
     items: list[FinancialStatementItem]
 

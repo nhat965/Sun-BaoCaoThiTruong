@@ -668,7 +668,7 @@ def import_financials(
 )
 def financial_statements(
     symbol: str,
-    period_type: str | None = Query(default=None, pattern="^(quarter|year|ttm)$"),
+    period_type: str | None = Query(default=None, pattern="^(quarter|year|ytd|ttm)$"),
     statement_scope: str | None = Query(
         default=None, pattern="^(consolidated|separate)$"
     ),

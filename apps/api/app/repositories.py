@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +23,13 @@ from app.database import (
     PriceObservation,
     SecurityRecord,
     SourceHealthRecord,
+)
+from app.financial_normalization import (
+    MAPPING_VERSION,
+    canonical_item_code,
+    infer_period_start,
+    normalize_currency,
+    normalize_period_type,
 )
 from app.price_integrity import market_session_date, provider_id_for
 from app.schemas import (
@@ -325,7 +333,7 @@ class SourceHealthRepository:
 
 
 FINANCIAL_STATEMENT_TYPES = {"income", "balance", "cash_flow"}
-FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ttm"}
+FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ytd", "ttm"}
 FINANCIAL_STATEMENT_SCOPES = {"consolidated", "separate"}
 FINANCIAL_STATEMENT_STATUSES = {"original", "amended"}
 FINANCIAL_VERIFICATION_STATUSES = {"verified", "unverified", "rejected"}
@@ -379,6 +387,8 @@ class FinancialRepository:
         skipped_items = 0
         errors: list[str] = []
         import_warnings: list[str] = []
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        retrieved_at_default = datetime.now(UTC)
         seen_periods: set[tuple[datetime, str, str]] = set()
         seen_items: set[tuple[datetime, str, str, str, str]] = set()
         touched_period_ids: set[int] = set()
@@ -398,11 +408,12 @@ class FinancialRepository:
                 period_end = _parse_datetime(row.get("period_end"))
                 if period_end is None:
                     raise ValueError("period_end is required")
-                period_type = (row.get("period_type") or "").strip().lower()
+                period_type = normalize_period_type(row.get("period_type") or "")
                 statement_scope = (row.get("statement_scope") or "consolidated").strip().lower()
                 statement_status = (row.get("statement_status") or "original").strip().lower()
                 statement_type = (row.get("statement_type") or "").strip().lower()
-                item_code = (row.get("item_code") or "").strip().lower()
+                raw_item_code = (row.get("item_code") or "").strip()
+                item_code = canonical_item_code(raw_item_code)
                 if period_type not in FINANCIAL_PERIOD_TYPES:
                     raise ValueError(f"period_type must be one of {sorted(FINANCIAL_PERIOD_TYPES)}")
                 if statement_type not in FINANCIAL_STATEMENT_TYPES:
@@ -417,7 +428,7 @@ class FinancialRepository:
                     raise ValueError(
                         f"statement_status must be one of {sorted(FINANCIAL_STATEMENT_STATUSES)}"
                     )
-                if not item_code or len(item_code) > 64:
+                if len(raw_item_code) > 128 or len(item_code) > 64:
                     raise ValueError("item_code is required and must be <= 64 characters")
                 raw_value = Decimal((row.get("value") or "").strip())
                 raw_unit = (row.get("unit") or "VND").strip().upper()
@@ -428,9 +439,7 @@ class FinancialRepository:
                     )
                 multiplier, normalized_unit = FINANCIAL_UNIT_MULTIPLIERS[raw_unit]
                 value = raw_value * multiplier
-                row_currency = (row.get("currency") or "VND").strip().upper()
-                if len(row_currency) != 3 or not row_currency.isalpha():
-                    raise ValueError("currency must be a three-letter ISO code")
+                row_currency = normalize_currency(row.get("currency"))
                 if normalized_unit == "VND" and row_currency != "VND":
                     raise ValueError(
                         "currency must be VND when the declared unit is a VND scale"
@@ -453,6 +462,19 @@ class FinancialRepository:
                 fiscal_quarter = int(quarter_text) if quarter_text else None
                 if fiscal_quarter is not None and fiscal_quarter not in {1, 2, 3, 4}:
                     raise ValueError("fiscal_quarter must be 1-4")
+                period_start = infer_period_start(
+                    period_end,
+                    period_type,
+                    fiscal_year,
+                    fiscal_quarter,
+                    _parse_datetime(row.get("period_start")),
+                )
+                accounting_standard = (
+                    row.get("accounting_standard") or "unknown"
+                ).strip().lower()[:32]
+                data_version = (row.get("data_version") or "financial-v1").strip()[:32]
+                row_retrieved_at = _parse_datetime(row.get("retrieved_at"))
+                retrieved_at = row_retrieved_at or retrieved_at_default
                 period = self.session.scalar(
                     select(FinancialPeriodRecord).where(
                         FinancialPeriodRecord.security_id == security.id,
@@ -466,6 +488,7 @@ class FinancialRepository:
                 if period is None:
                     period = FinancialPeriodRecord(
                         security_id=security.id,
+                        period_start=period_start,
                         period_end=period_end,
                         period_type=period_type,
                         fiscal_year=fiscal_year,
@@ -476,8 +499,13 @@ class FinancialRepository:
                         verification_status=verification_status,
                         statement_scope=statement_scope,
                         statement_status=statement_status,
+                        accounting_standard=accounting_standard,
                         unit="VND" if normalized_unit == "VND" else normalized_unit,
                         currency=row_currency,
+                        retrieved_at=retrieved_at,
+                        validated_at=None,
+                        data_version=data_version,
+                        content_hash=content_hash,
                         updated_at=datetime.now(UTC),
                     )
                     self.session.add(period)
@@ -504,6 +532,12 @@ class FinancialRepository:
                             period.currency != period_currency,
                             period.fiscal_year != fiscal_year,
                             period.fiscal_quarter != fiscal_quarter,
+                            period.period_start != period_start,
+                            period.accounting_standard != accounting_standard,
+                            period.data_version != data_version,
+                            period.content_hash != content_hash,
+                            row_retrieved_at is not None
+                            and period.retrieved_at != row_retrieved_at,
                         )
                     )
                     if period_changed:
@@ -514,6 +548,12 @@ class FinancialRepository:
                         period.currency = period_currency
                         period.fiscal_year = fiscal_year
                         period.fiscal_quarter = fiscal_quarter
+                        period.period_start = period_start
+                        period.accounting_standard = accounting_standard
+                        period.data_version = data_version
+                        period.content_hash = content_hash
+                        if row_retrieved_at is not None:
+                            period.retrieved_at = row_retrieved_at
                         period.updated_at = datetime.now(UTC)
                     period_key = (
                         period_end,
@@ -549,6 +589,8 @@ class FinancialRepository:
                             period_id=period.id,
                             statement_type=statement_type,
                             item_code=item_code,
+                            raw_item_code=raw_item_code,
+                            mapping_version=MAPPING_VERSION,
                             value=value,
                             unit=normalized_unit,
                             raw_value=raw_value,
@@ -577,6 +619,8 @@ class FinancialRepository:
                                 item.source_name != source_name,
                                 item.source_url != item_source_url,
                                 item.verification_status != verification_status,
+                                item.raw_item_code != raw_item_code,
+                                item.mapping_version != MAPPING_VERSION,
                             )
                         )
                         if item_changed:
@@ -587,6 +631,8 @@ class FinancialRepository:
                             item.source_name = source_name
                             item.source_url = item_source_url
                             item.verification_status = verification_status
+                            item.raw_item_code = raw_item_code
+                            item.mapping_version = MAPPING_VERSION
                             item.updated_at = datetime.now(UTC)
                             updated_items += 1
                         else:
@@ -758,6 +804,7 @@ class FinancialRepository:
             )
             payload.append(
                 FinancialStatementPeriod(
+                    period_start=period.period_start,
                     period_end=period.period_end,
                     period_type=period.period_type,
                     fiscal_year=period.fiscal_year,
@@ -765,15 +812,22 @@ class FinancialRepository:
                     reported_at=period.reported_at,
                     statement_scope=period.statement_scope,
                     statement_status=period.statement_status,
+                    accounting_standard=period.accounting_standard,
                     currency=period.currency,
                     source_name=period.source_name,
                     source_url=period.source_url,
                     verification_status=period.verification_status,
+                    retrieved_at=period.retrieved_at,
+                    validated_at=period.validated_at,
+                    data_version=period.data_version,
+                    content_hash=period.content_hash,
                     updated_at=period.updated_at,
                     items=[
                         FinancialStatementItem(
                             statement_type=row.statement_type,
                             item_code=row.item_code,
+                            raw_item_code=row.raw_item_code,
+                            mapping_version=row.mapping_version,
                             value=float(row.value),
                             unit=row.unit,
                             raw_value=(
