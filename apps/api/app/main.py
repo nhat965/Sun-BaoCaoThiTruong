@@ -57,6 +57,7 @@ from app.market_reporting import (
     create_daily_market_report,
     list_report_snapshots,
 )
+from app.market_trend import calculate_market_breadth, calculate_market_regime
 from app.middleware import RequestBodyLimitMiddleware
 from app.portfolio import (
     add_transaction,
@@ -88,8 +89,10 @@ from app.schemas import (
     FinancialValidationReport,
     JobRequest,
     JobResult,
+    MarketBreadthResponse,
     MarketIndicesResponse,
     MarketOverview,
+    MarketRegimeResponse,
     PortfolioCreate,
     PortfolioImportResult,
     PortfolioSummary,
@@ -403,6 +406,16 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
 @app.get("/api/v1/market/overview", response_model=MarketOverview)
 def market_overview() -> MarketOverview:
     return build_market_overview()
+
+
+@app.get("/api/v1/market/breadth", response_model=MarketBreadthResponse)
+def market_breadth() -> MarketBreadthResponse:
+    return calculate_market_breadth()
+
+
+@app.get("/api/v1/market/regime", response_model=MarketRegimeResponse)
+def market_regime() -> MarketRegimeResponse:
+    return calculate_market_regime()
 
 
 @app.post("/api/v1/market/reports/{report_type}", response_model=DailyMarketReport)

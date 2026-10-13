@@ -641,6 +641,68 @@ class MarketIndicesResponse(BaseModel):
     formula_version: str = "market-foundation-v1"
 
 
+class MarketBreadthPoint(BaseModel):
+    market_session: str
+    advancers: int
+    decliners: int
+    unchanged: int
+    traded_securities: int
+    above_ma20_percent: float | None = None
+    above_ma50_percent: float | None = None
+    above_ma200_percent: float | None = None
+
+
+class MarketBreadthResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    data_mode: str = "unavailable"
+    validation_status: str = "unvalidated"
+    freshness: str = "unknown"
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    advancers: int | None = None
+    decliners: int | None = None
+    unchanged: int | None = None
+    traded_securities: int | None = None
+    advance_decline_ratio: float | None = None
+    advance_decline_difference: int | None = None
+    above_ma20: int | None = None
+    above_ma20_denominator: int | None = None
+    above_ma20_percent: float | None = None
+    above_ma50: int | None = None
+    above_ma50_denominator: int | None = None
+    above_ma50_percent: float | None = None
+    above_ma200: int | None = None
+    above_ma200_denominator: int | None = None
+    above_ma200_percent: float | None = None
+    new_highs_20: int | None = None
+    new_lows_20: int | None = None
+    divergences: list[str] = Field(default_factory=list)
+    historical: list[MarketBreadthPoint] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-breadth-v1"
+
+
+class MarketRegimeResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    data_mode: str = "unavailable"
+    validation_status: str = "unvalidated"
+    freshness: str = "unknown"
+    regime: Literal["UPTREND", "DOWNTREND", "SIDEWAYS", "VOLATILE", "UNCERTAIN"] = "UNCERTAIN"
+    indicators: dict[str, float | int | str | None] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    conflicting_signals: list[str] = Field(default_factory=list)
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-regime-v1"
+
+
 class MarketOverview(BaseModel):
     status: Literal["available", "partial", "unavailable"]
     as_of: datetime | None = None
@@ -654,6 +716,7 @@ class MarketOverview(BaseModel):
     unchanged: int | None = None
     total_volume: int | None = None
     estimated_trading_value: float | None = None
+    actual_trading_value: float | None = None
     indices: list[MarketIndexObservation] = Field(default_factory=list)
     sector_performance_percent: dict[str, float] = Field(default_factory=dict)
     foreign_net_value: float | None = None

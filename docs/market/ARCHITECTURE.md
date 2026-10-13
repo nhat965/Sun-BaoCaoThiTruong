@@ -1,4 +1,4 @@
-# Market Intelligence architecture — PR-A foundation
+# Market Intelligence architecture — PR-A/PR-B foundation
 
 PR-A establishes the market-data contract used by later breadth, sector, risk and report
 features. It deliberately separates source records from derived analytics.
@@ -14,6 +14,9 @@ features. It deliberately separates source records from derived analytics.
 - `market_index_observations` stores VN-Index, VN30, HNX-Index, UPCoM-Index and any
   authorized related index observations. The unique key is `(symbol, provider_id,
   market_session_date)`, so a replay cannot create a second canonical row.
+- `market_breadth_snapshots` and `market_regime_snapshots` store derived results keyed by
+  session and formula version; they retain coverage, warnings and limitations alongside
+  the metrics.
 
 ## Trust and deduplication
 
@@ -37,5 +40,8 @@ holiday gap as a missing candle.
   source metadata, deduplicates replays and protects valid records from an invalid replay.
 - `GET /api/v1/data-quality` exposes history-depth, exchange and index coverage without
   inventing a full-market denominator.
+- `GET /api/v1/market/breadth` and `GET /api/v1/market/regime` expose deterministic
+  breadth/trend results with explicit denominators and evidence. They never infer index,
+  foreign-flow or actual trading-value data.
 
 Migration `0017_market_data_foundation` is additive and has an explicit downgrade.
