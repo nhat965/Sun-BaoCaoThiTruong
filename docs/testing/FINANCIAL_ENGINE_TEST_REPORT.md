@@ -1,4 +1,4 @@
-# Financial Statements Engine V2 — PR-E test report
+# Financial Statements Engine V2 — PR-F test report
 
 ## Scope
 
@@ -10,6 +10,8 @@ sign-safe CAPEX/FCF, additional health metrics and period-level metadata. PR-D
 adds an explicit financial provider contract and routes authorized CSV sync
 through that contract without guessing undocumented endpoints. PR-E exposes
 formula metadata through the public API and renders it in the research UI.
+PR-F adds HPG/FPT acceptance coverage, idempotent replay assertions and the
+final handoff documentation.
 
 ## Changes tested
 
@@ -36,18 +38,22 @@ formula metadata through the public API and renders it in the research UI.
   timestamp. Missing rights are blocked before any fetch.
 - The frontend renders additional health/FCF metrics, formula provenance,
   tooltips and explicit missing/not-applicable states.
+- Automated acceptance imports the same authorized payload for HPG and FPT,
+  verifies a replay creates no duplicates and confirms missing metrics stay
+  explicit.
 
 ## Baseline and PR-A results
 
 - Baseline from PR #4 head: Ruff passed; backend pytest **66 passed, 1 warning**.
 - PR-A targeted tests: **16 passed, 1 warning**.
 - PR-B validation tests: **10 passed, 1 warning**.
-- Full backend Ruff/pytest: **80 passed, 1 warning**.
+- Full backend Ruff/pytest: **81 passed, 1 warning**.
 - Frontend lint and production build: passed.
 - SQLite migration upgrade → downgrade → upgrade through `0015`: passed.
 
 ## Explicitly deferred
 
-Live commercial provider activation and acceptance/documentation hardening belong to later PRs.
+Live commercial provider activation remains blocked pending credentials,
+entitlement and a successful authorized call.
 No live BCTC verification is claimed without authorized credentials and source
 entitlement.
