@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from app.config import Settings
 from app.connectors.base import ConnectorError, DataCapability, MarketDataConnector
+from app.connectors.financial import AuthorizedCsvFinancialProvider, FinancialProviderError
 from app.connectors.manager import ConnectorManager
 from app.database import (
     DataSyncErrorRecord,
@@ -17,7 +18,7 @@ from app.database import (
 from app.normalization import normalize_price_series
 from app.repositories import FinancialRepository, PriceRepository, SourceHealthRepository
 from app.schemas import DataSyncRun, ProviderCapabilityStatus
-from app.secure_http import SecureFetchError, fetch_authorized_csv, validate_https_destination
+from app.secure_http import fetch_authorized_csv, validate_https_destination
 
 
 def sync_run_schema(row: DataSyncRunRecord) -> DataSyncRun:
@@ -217,6 +218,11 @@ class DataSyncService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.manager = ConnectorManager(settings)
+        self.financial_provider = AuthorizedCsvFinancialProvider(
+            settings,
+            fetcher=fetch_authorized_csv,
+            destination_validator=validate_https_destination,
+        )
 
     def _provider(self, provider_id: str) -> MarketDataConnector:
         candidates = [
@@ -388,45 +394,23 @@ class DataSyncService:
         if exists is None:
             raise ValueError(f"Mã {symbol} chưa có trong securities master.")
 
-        template = self.settings.financial_csv_url_template
-        if not template or not self.settings.financial_csv_rights_confirmed:
-            return self._blocked(
-                symbol,
-                "BLOCKED: configure FINANCIAL_CSV_URL_TEMPLATE and confirm lawful "
-                "automated-use rights via FINANCIAL_CSV_RIGHTS_CONFIRMED=true.",
-            )
-        if template.count("{symbol}") != 1:
-            return self._blocked(symbol, "BLOCKED: URL template must contain {symbol} exactly once.")
-        url = template.replace("{symbol}", symbol)
-        allowed_hosts = {
-            host.strip().rstrip(".").lower()
-            for host in self.settings.financial_csv_allowed_hosts.split(",")
-            if host.strip()
-        }
         try:
-            source_host = validate_https_destination(url, allowed_hosts)
-        except SecureFetchError as exc:
-            return self._blocked(symbol, f"BLOCKED: {exc}")
+            result = self.financial_provider.fetch(symbol)
+        except FinancialProviderError as exc:
+            return self._blocked(symbol, str(exc))
         run_id = self._start(
-            "authorized_https_csv", DataCapability.INCOME_STATEMENT, symbol, "incremental", None
+            result.provider_id,
+            DataCapability.INCOME_STATEMENT,
+            symbol,
+            "incremental",
+            None,
         )
         try:
-            payload = fetch_authorized_csv(
-                url,
-                allowed_hosts=allowed_hosts,
-                bearer_token=self.settings.financial_csv_bearer_token,
-                timeout_seconds=self.settings.request_timeout_seconds,
-                max_bytes=min(
-                    self.settings.financial_csv_max_bytes,
-                    self.settings.max_request_bytes,
-                ),
-                retries=self.settings.financial_csv_retries,
-            )
             with SessionLocal() as session:
                 imported = FinancialRepository(session).import_csv(
                     symbol,
-                    payload,
-                    "authorized_https_csv",
+                    result.content,
+                    result.provider_id,
                     strict=True,
                     accept_verified_status=False,
                 )
@@ -443,7 +427,8 @@ class DataSyncService:
                 row.finished_at = datetime.now(UTC)
                 row.details_json = json.dumps(
                     {
-                        "source_host": source_host,
+                        "source_host": result.source_host,
+                        "retrieved_at": result.retrieved_at.isoformat(),
                         "inserted_periods": imported.inserted_periods,
                         "updated_periods": imported.updated_periods,
                         "validation_statuses": sorted(
@@ -453,14 +438,14 @@ class DataSyncService:
                     }
                 )
                 SourceHealthRepository(session).record(
-                    "authorized_https_csv",
+                    result.provider_id,
                     status="available" if not imported.rejected else "unavailable",
                     message="financial statement CSV sync completed",
                 )
                 session.commit()
                 session.refresh(row)
                 return sync_run_schema(row)
-        except (SecureFetchError, ValueError) as exc:
+        except (FinancialProviderError, ValueError) as exc:
             # Do not log tokens, response bodies or request URLs containing secrets.
             message = f"Authorized financial CSV sync failed: {type(exc).__name__}"
             with SessionLocal() as session:
@@ -476,7 +461,7 @@ class DataSyncService:
                     )
                 )
                 SourceHealthRepository(session).record(
-                    "authorized_https_csv", status="unavailable", message=message
+                    result.provider_id, status="unavailable", message=message
                 )
                 session.commit()
                 session.refresh(row)
