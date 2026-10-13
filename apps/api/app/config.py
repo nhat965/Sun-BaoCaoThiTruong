@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     ssi_api_secret: str | None = None
     fiingroup_base_url: str | None = None
     fiingroup_api_key: str | None = None
+    financial_csv_url_template: str | None = None
+    financial_csv_bearer_token: str | None = None
+    financial_csv_rights_confirmed: bool = False
     admin_api_token: str | None = None
     reader_api_token: str | None = None
     admin_rate_limit_per_minute: int = 30
