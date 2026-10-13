@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
@@ -160,6 +160,13 @@ def service(config: Settings = Depends(get_settings)) -> AnalysisService:
     return AnalysisService(config)
 
 
+def _freshness_label(timestamp: datetime | None) -> str:
+    if timestamp is None:
+        return "unknown"
+    normalized = timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
+    return "fresh" if datetime.now(UTC) - normalized <= timedelta(days=2) else "stale"
+
+
 @app.get("/api/v1/health")
 def health(config: Settings = Depends(get_settings)) -> dict[str, str]:
     return {"status": "ok", "market_data_mode": config.market_data_mode, "version": app.version}
@@ -276,6 +283,12 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
             if symbol
         )
         price_observations_count = session.scalar(select(func.count(PriceObservation.id))) or 0
+        price_sessions_count = session.scalar(
+            select(func.count(func.distinct(PriceObservation.market_session_date)))
+        ) or 0
+        price_sources = sorted(
+            source for source in session.scalars(select(PriceObservation.provider).distinct()).all() if source
+        )
         last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
         last_retrieval_timestamp = session.scalar(select(func.max(PriceObservation.ingested_at)))
         latest_market_timestamp_by_exchange = {
@@ -371,6 +384,9 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         active_securities_count=active_securities_count,
         exchange_distribution=exchange_distribution,
         price_observations_count=price_observations_count,
+        price_sessions_count=price_sessions_count,
+        price_sources=price_sources,
+        latest_price_freshness=_freshness_label(last_market_timestamp),
         symbols_with_price_history=len(active_with_prices),
         symbols_missing_price_history=len(missing_price_symbols),
         symbols_with_financial_statements=len(active_with_financials),

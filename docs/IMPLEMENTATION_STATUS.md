@@ -43,7 +43,7 @@
 | M5 AI analyst and verification | PARTIAL | Typed claims and a closed typed tool plan verify metric/value/unit/period/symbol/evidence/forecast support; production LLM evaluation remains credential-dependent. |
 | M6 Market overview and daily reporting | PARTIAL | Stored-data breadth/sector aggregation, explicit missing index/foreign-flow fields, idempotent pre/post reports and leased EOD snapshots are implemented; production delivery and official calendar remain. |
 | M7 Social and portfolio | PARTIAL | Deterministic classification and manual/CSV portfolio accounting are implemented without scraping or trading access; live social and VPS APIs remain blocked. |
-| M8 Release readiness | PARTIAL | Local lint, 55 tests, frontend build and migration cycle through `0013` pass. PostgreSQL CI, dependency audit and health-gated Compose are configured; Docker smoke cannot run on this host. |
+| M8 Release readiness | PARTIAL | CI defines the PostgreSQL migration cycle, backend tests/Ruff, frontend lint/build and dependency audits. Local production-readiness audit is documented in `docs/testing/PRODUCTION_READINESS_AUDIT.md`; Docker smoke remains unavailable without a Docker engine. |
 
 Statuses are evidence-based: `COMPLETE` means implemented and locally verified, `PARTIAL` means a useful vertical slice exists with an explicit gap, and `BLOCKED` requires credentials, rights or infrastructure not provided here.
 ## PR-D — Risk & Scenario Engine

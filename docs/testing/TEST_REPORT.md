@@ -1,18 +1,19 @@
 # Test report — V4.1 Task 02
 
-Date: 2026-10-13 (Asia/Bangkok)
+Date: 2026-10-14 (Asia/Bangkok)
 
 ## Automated checks
 
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 55 tests |
+| Backend `pytest -q` | PASS — 98 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0013` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0020` | PASS — temporary SQLite database |
 | CI PostgreSQL migration gate | CONFIGURED — PostgreSQL 16 service, full upgrade/downgrade/re-upgrade |
-| Dependency audit gate | CONFIGURED — `pip-audit` and production `npm audit` at high severity |
+| Dependency audit | PASS — `pip-audit` no known vulnerabilities; production `npm audit` 0 vulnerabilities |
+| Market analytics benchmark | PASS — labelled fixture, 1,000 symbols × 200 sessions, 197.65 ms, no writes |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
 | Impeccable UI detector | PASS — one side-border warning found and removed in the changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
@@ -30,7 +31,7 @@ server pagination, HPG analysis navigation, local watchlist persistence, explici
 values for ACV, and layouts at 1440px and 390×844 without page-level horizontal overflow.
 The browser console contained no warnings or errors.
 
-Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate.
+Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate. Market analytics regressions also verify complete RVOL20 baselines, timestamp-based freshness, requested-session index alignment and replay idempotency.
 
 Additional regressions verify the closed typed AI tool registry, market breadth/report
 snapshot idempotence, leased EOD ownership, exponential retry scheduling, portfolio

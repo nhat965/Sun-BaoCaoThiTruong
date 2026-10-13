@@ -167,6 +167,9 @@ class DataQualityReport(BaseModel):
     active_securities_count: int
     exchange_distribution: dict[str, int] = Field(default_factory=dict)
     price_observations_count: int
+    price_sessions_count: int = 0
+    price_sources: list[str] = Field(default_factory=list)
+    latest_price_freshness: str = "unknown"
     symbols_with_price_history: int = 0
     symbols_missing_price_history: int = 0
     symbols_with_financial_statements: int = 0
@@ -738,6 +741,7 @@ class SectorIntelligenceResponse(BaseModel):
     source: str | None = None
     data_mode: str = "unavailable"
     validation_status: str = "unvalidated"
+    freshness: str = "unknown"
     taxonomy_version: str = "registry-v1"
     coverage: dict[str, int | float] = Field(default_factory=dict)
     sort_by: str = "performance_1d"
@@ -763,6 +767,7 @@ class LiquidityResponse(BaseModel):
     source: str | None = None
     data_mode: str = "unavailable"
     validation_status: str = "unvalidated"
+    freshness: str = "unknown"
     coverage: dict[str, int | float] = Field(default_factory=dict)
     total_volume: int | None = None
     average_volume_5: float | None = None

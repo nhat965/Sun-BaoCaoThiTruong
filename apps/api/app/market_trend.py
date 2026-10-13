@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from statistics import mean, pstdev
 
 from sqlalchemy import select
@@ -44,6 +44,17 @@ def _safe_ratio(numerator: int, denominator: int) -> float | None:
     if denominator <= 0:
         return None
     return round(numerator / denominator, 4)
+
+
+def _freshness(rows: object | list[object] | tuple[object, ...], now: datetime | None = None) -> str:
+    """Classify freshness from the newest market timestamp, never from row presence."""
+    values = rows.values() if isinstance(rows, dict) else rows if isinstance(rows, (list, tuple)) else [rows]
+    timestamps = [_utc(timestamp) for row in values if (timestamp := getattr(row, "market_timestamp", None))]
+    if not timestamps:
+        return "unknown"
+    reference = _utc(now or datetime.now(UTC))
+    age = reference - max(timestamps)
+    return "fresh" if age <= timedelta(days=2) else "stale"
 
 
 def _history() -> tuple[list[SecurityRecord], dict[int, list[object]]]:
@@ -88,12 +99,12 @@ def _latest_session(
     return session_date, as_of, current
 
 
-def _provenance(current: dict[int, object]) -> tuple[str, str, str]:
+def _provenance(current: dict[int, object], now: datetime | None = None) -> tuple[str, str, str]:
     modes = {getattr(row, "source_mode", "unknown") for row in current.values()}
     validations = {getattr(row, "validation_status", "unvalidated") for row in current.values()}
     mode = next(iter(modes)) if len(modes) == 1 else "historical" if modes else "unavailable"
     validation = "valid" if validations == {"valid"} else "partial" if validations else "unvalidated"
-    return mode, validation, "fresh" if current else "unknown"
+    return mode, validation, _freshness(current, now)
 
 
 def _ma_metrics(row_history: list[object], period: int) -> tuple[bool, bool] | None:
@@ -147,6 +158,22 @@ def _breadth_for_date(
     )
 
 
+def _aligned_index_change(rows: list[object], session_date: date) -> float | None:
+    """Return an index change only when the newest observation matches the target session."""
+    by_session: dict[date, object] = {}
+    for row in rows:
+        row_date = getattr(row, "market_session_date", None)
+        if row_date is not None and row_date <= session_date:
+            by_session.setdefault(row_date, row)
+    ordered = [by_session[key] for key in sorted(by_session, reverse=True)]
+    if len(ordered) < 2 or ordered[0].market_session_date != session_date:
+        return None
+    previous = ordered[1]
+    if previous.close == 0:
+        return None
+    return round((float(ordered[0].close) / float(previous.close) - 1) * 100, 4)
+
+
 def _index_change(session_date: date) -> float | None:
     with SessionLocal() as session:
         rows = session.scalars(
@@ -159,11 +186,9 @@ def _index_change(session_date: date) -> float | None:
                 MarketIndexObservationRecord.market_session_date.desc(),
                 MarketIndexObservationRecord.market_timestamp.desc(),
             )
-            .limit(2)
+            .limit(20)
         ).all()
-    if len(rows) < 2 or rows[1].close == 0:
-        return None
-    return round((float(rows[0].close) / float(rows[1].close) - 1) * 100, 4)
+    return _aligned_index_change(rows, session_date)
 
 
 def _persist_breadth(response: MarketBreadthResponse) -> None:
