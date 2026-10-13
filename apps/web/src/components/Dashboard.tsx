@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResult, FinancialStatementsResponse, FinancialTrendResponse, ValuationResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 import { SecuritiesExplorer } from "./SecuritiesExplorer";
+import { MarketIntelligence } from "./MarketIntelligence";
 
 // Use the same-origin proxy by default so Codex/in-app browsers do not need to
 // make a cross-origin request to the backend port. Set NEXT_PUBLIC_API_BASE_URL
@@ -210,6 +211,7 @@ export function Dashboard() {
     </header>
 
     <SecuritiesExplorer activeSymbol={data?.security.symbol ?? ""} onAnalyze={openAnalysis} />
+    <MarketIntelligence />
 
     <section className="query-strip" id="top">
       <div><p className="eyebrow">Bàn nghiên cứu cổ phiếu Việt Nam</p><h2 className="query-title">Đi từ dữ liệu đến luận điểm.</h2></div>
