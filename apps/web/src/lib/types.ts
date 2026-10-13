@@ -57,6 +57,21 @@ export interface FinancialMetricResult {
   source_name: string | null;
   statement_scope: "consolidated" | "separate" | null;
   statement_status: "original" | "amended" | null;
+  metric_metadata: Record<string, FinancialMetricMetadata>;
+}
+
+export interface FinancialMetricMetadata {
+  metric_code: string;
+  value: number | null;
+  unit: string;
+  formula_version: string;
+  required_inputs: string[];
+  missing_inputs: string[];
+  input_status: "complete" | "incomplete" | "not_applicable";
+  applicable_company_types: string[];
+  period_policy: string;
+  limitations: string;
+  as_of_date: string | null;
 }
 
 export interface FinancialTrendResponse {

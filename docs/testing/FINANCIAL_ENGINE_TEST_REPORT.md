@@ -1,4 +1,4 @@
-# Financial Statements Engine V2 — PR-D test report
+# Financial Statements Engine V2 — PR-E test report
 
 ## Scope
 
@@ -8,7 +8,8 @@ compatibility. PR-B adds deterministic validation/reconciliation and strict
 rollback reporting. PR-C adds a versioned formula registry, input provenance,
 sign-safe CAPEX/FCF, additional health metrics and period-level metadata. PR-D
 adds an explicit financial provider contract and routes authorized CSV sync
-through that contract without guessing undocumented endpoints.
+through that contract without guessing undocumented endpoints. PR-E exposes
+formula metadata through the public API and renders it in the research UI.
 
 ## Changes tested
 
@@ -33,6 +34,8 @@ through that contract without guessing undocumented endpoints.
 - Authorized financial CSV retrieval is represented by a provider object with
   declared income/balance/cash-flow capabilities, source host and retrieval
   timestamp. Missing rights are blocked before any fetch.
+- The frontend renders additional health/FCF metrics, formula provenance,
+  tooltips and explicit missing/not-applicable states.
 
 ## Baseline and PR-A results
 
@@ -45,6 +48,6 @@ through that contract without guessing undocumented endpoints.
 
 ## Explicitly deferred
 
-Live commercial provider activation and financial analysis UI belong to later PRs.
+Live commercial provider activation and acceptance/documentation hardening belong to later PRs.
 No live BCTC verification is claimed without authorized credentials and source
 entitlement.

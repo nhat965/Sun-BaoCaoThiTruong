@@ -135,7 +135,9 @@ form small { color: var(--color-ink-muted); display: block; margin-block-start: 
 .metric-grid article { background: var(--color-paper-raised); border-block-start: 3px solid var(--color-accent); padding: var(--space-md); }
 .metric-grid span { color: var(--color-ink-muted); display: block; font-size: var(--text-sm); }
 .metric-grid strong { display: block; font-family: var(--font-mono); font-size: var(--text-lg); margin-block-start: var(--space-sm); }
+.metric-grid small { color: var(--color-ink-muted); display: block; font-size: var(--text-xs); line-height: 1.4; margin-block-start: var(--space-sm); }
 .metric-warnings { color: var(--color-ink-muted); line-height: 1.5; margin-block-end: 0; padding-inline-start: var(--space-lg); }
+.metric-provenance { color: var(--color-ink-muted); display: flex; flex-wrap: wrap; gap: var(--space-md); font-size: var(--text-xs); margin-block-start: var(--space-md); }
 .financial-trend { border-block-start: var(--rule-thin) solid var(--color-rule); margin-block-start: var(--space-xl); padding-block-start: var(--space-lg); }
 .trend-scroll { overflow-x: auto; }
 .financial-trend table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin-block-start: var(--space-md); min-width: 46rem; width: 100%; }
