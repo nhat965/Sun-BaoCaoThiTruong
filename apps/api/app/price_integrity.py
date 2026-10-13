@@ -50,6 +50,8 @@ def canonical_daily_prices(settings: Settings | None = None):
             PriceObservation.security_id.label("security_id"),
             PriceObservation.close.label("close"),
             PriceObservation.volume.label("volume"),
+            PriceObservation.actual_trading_value.label("actual_trading_value"),
+            PriceObservation.market_cap.label("market_cap"),
             PriceObservation.market_timestamp.label("market_timestamp"),
             PriceObservation.market_session_date.label("market_session_date"),
             PriceObservation.ingested_at.label("retrieved_at"),

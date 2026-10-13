@@ -125,6 +125,60 @@ class MarketIndexObservationRecord(Base):
     adjustment_policy: Mapped[str] = mapped_column(String(128), default="unknown")
 
 
+class MarketBreadthSnapshotRecord(Base):
+    __tablename__ = "market_breadth_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_session_date",
+            "formula_version",
+            name="uq_market_breadth_session_formula",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    provider: Mapped[str] = mapped_column(String(128), default="canonical-price-selection")
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage_json: Mapped[str] = mapped_column(Text, default="{}")
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    divergences_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    formula_version: Mapped[str] = mapped_column(String(32), default="market-breadth-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MarketRegimeSnapshotRecord(Base):
+    __tablename__ = "market_regime_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_session_date",
+            "formula_version",
+            name="uq_market_regime_session_formula",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    regime: Mapped[str] = mapped_column(String(24), index=True)
+    provider: Mapped[str] = mapped_column(String(128), default="canonical-price-selection")
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage_json: Mapped[str] = mapped_column(Text, default="{}")
+    indicators_json: Mapped[str] = mapped_column(Text, default="{}")
+    evidence_json: Mapped[str] = mapped_column(Text, default="[]")
+    conflicts_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    limitations_json: Mapped[str] = mapped_column(Text, default="[]")
+    formula_version: Mapped[str] = mapped_column(String(32), default="market-regime-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
 

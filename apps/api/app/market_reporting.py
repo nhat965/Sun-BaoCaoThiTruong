@@ -54,7 +54,8 @@ def build_market_overview() -> MarketOverview:
     ]
     changes = {}
     total_volume = 0
-    estimated_value = 0.0
+    actual_trading_value = 0.0
+    has_actual_trading_value = False
     source_modes = set()
     sources = set()
     for security in fresh:
@@ -62,7 +63,9 @@ def build_market_overview() -> MarketOverview:
         change = (float(latest.close) / float(previous.close) - 1) * 100
         changes[security.id] = change
         total_volume += latest.volume
-        estimated_value += float(latest.close) * latest.volume
+        if latest.actual_trading_value is not None:
+            actual_trading_value += float(latest.actual_trading_value)
+            has_actual_trading_value = True
         source_modes.add(latest.source_mode)
         sources.add(latest.provider)
 
@@ -104,7 +107,7 @@ def build_market_overview() -> MarketOverview:
         else ("mixed" if len(normalized_modes) > 1 else "unknown")
     )
     limitations = [
-        "Giá trị giao dịch là close × volume từ quan sát lưu trữ, không thay thế số liệu chính thức.",
+        "Giá trị giao dịch chỉ hiển thị khi provider cung cấp actual_trading_value; không suy diễn từ close × volume.",
         "Chưa có dữ liệu mua bán ròng nước ngoài đã xác minh.",
     ]
     if not indices:
@@ -123,7 +126,8 @@ def build_market_overview() -> MarketOverview:
         decliners=decliners,
         unchanged=unchanged,
         total_volume=total_volume,
-        estimated_trading_value=round(estimated_value, 4),
+        estimated_trading_value=None,
+        actual_trading_value=round(actual_trading_value, 4) if has_actual_trading_value else None,
         indices=indices,
         sector_performance_percent=sector_performance,
         limitations=limitations,
