@@ -32,4 +32,3 @@ The current mapping includes revenue, cost of goods sold, gross profit,
 operating income, profit before tax, tax expense, parent net income, assets,
 liabilities, equity, cash, inventory, receivables, borrowings, cash-flow
 categories, CAPEX and share-count fields.
-

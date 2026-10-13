@@ -19,4 +19,3 @@
    and ratios are not silently converted to monetary units.
 8. Every import records the payload hash and retrieval timestamp. A replay of
    identical content remains idempotent and does not require a new timestamp.
-

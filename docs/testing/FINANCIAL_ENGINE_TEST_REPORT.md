@@ -34,4 +34,3 @@ Accounting consistency and reconciliation reports, formula registry/TTM metric
 engine, live provider activation and financial analysis UI belong to later PRs.
 No live BCTC verification is claimed without authorized credentials and source
 entitlement.
-
