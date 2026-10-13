@@ -1,12 +1,12 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from io import BytesIO
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analyst import AnalystService
@@ -46,6 +46,7 @@ from app.database import (
     ValuationResultRecord,
     init_db,
 )
+from app.freshness import assess_freshness
 from app.market_foundation import (
     MarketIndexImportResult,
     canonical_market_universe,
@@ -160,11 +161,22 @@ def service(config: Settings = Depends(get_settings)) -> AnalysisService:
     return AnalysisService(config)
 
 
-def _freshness_label(timestamp: datetime | None) -> str:
-    if timestamp is None:
-        return "unknown"
-    normalized = timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
-    return "fresh" if datetime.now(UTC) - normalized <= timedelta(days=2) else "stale"
+def _freshness_label(
+    timestamp: datetime | None,
+    *,
+    market_session_date: date | None = None,
+    source_mode: str | None = None,
+    provider_freshness: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Return a conservative label; wall-clock age alone is not freshness evidence."""
+    return assess_freshness(
+        market_timestamp=timestamp,
+        market_session_date=market_session_date,
+        source_mode=source_mode,
+        provider_freshness=provider_freshness,
+        now=now,
+    ).status
 
 
 @app.get("/api/v1/health")
@@ -252,11 +264,31 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         security_ids_with_prices = set(
             session.scalars(select(PriceObservation.security_id).distinct()).all()
         )
+        security_ids_with_actual_values = set(
+            session.scalars(
+                select(PriceObservation.security_id)
+                .where(PriceObservation.actual_trading_value.is_not(None))
+                .distinct()
+            ).all()
+        )
+        security_ids_with_market_cap = set(
+            session.scalars(
+                select(PriceObservation.security_id)
+                .where(PriceObservation.market_cap.is_not(None))
+                .distinct()
+            ).all()
+        )
         active_with_prices = [
             row for row in active_securities if row.id in security_ids_with_prices
         ]
         missing_price_symbols = sorted(
             row.symbol for row in active_securities if row.id not in security_ids_with_prices
+        )
+        missing_actual_trading_value_symbols = sorted(
+            row.symbol for row in active_securities if row.id not in security_ids_with_actual_values
+        )
+        missing_market_cap_symbols = sorted(
+            row.symbol for row in active_securities if row.id not in security_ids_with_market_cap
         )
         security_ids_with_financials = set(
             session.scalars(select(FinancialPeriodRecord.security_id).distinct()).all()
@@ -291,6 +323,78 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         )
         last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
         last_retrieval_timestamp = session.scalar(select(func.max(PriceObservation.ingested_at)))
+        latest_price = session.scalar(
+            select(PriceObservation).order_by(
+                PriceObservation.market_session_date.desc(),
+                PriceObservation.market_timestamp.desc(),
+                PriceObservation.ingested_at.desc(),
+                PriceObservation.id.desc(),
+            ).limit(1)
+        )
+        latest_freshness = assess_freshness(
+            market_timestamp=latest_price.market_timestamp if latest_price else None,
+            market_session_date=latest_price.market_session_date if latest_price else None,
+            source_mode=latest_price.source_mode if latest_price else None,
+            provider_freshness=latest_price.freshness if latest_price else None,
+        )
+        session_rows = session.execute(
+            select(
+                PriceObservation.market_session_date,
+                func.count(func.distinct(PriceObservation.security_id)),
+                func.count(PriceObservation.id),
+                func.count(PriceObservation.actual_trading_value),
+                func.count(PriceObservation.market_cap),
+            )
+            .group_by(PriceObservation.market_session_date)
+            .order_by(PriceObservation.market_session_date.desc())
+            .limit(30)
+        ).all()
+        price_coverage_by_session = {
+            session_date.isoformat(): {
+                "symbols_with_price": int(symbol_count),
+                "observations": int(observation_count),
+                "actual_trading_value_observations": int(actual_count),
+                "market_cap_observations": int(market_cap_count),
+            }
+            for session_date, symbol_count, observation_count, actual_count, market_cap_count in session_rows
+        }
+        exchange_rows = session.execute(
+            select(
+                SecurityRecord.exchange,
+                func.count(func.distinct(SecurityRecord.id)),
+                func.count(func.distinct(PriceObservation.security_id)),
+                func.count(PriceObservation.id),
+                func.count(func.distinct(case((PriceObservation.actual_trading_value.is_not(None), PriceObservation.security_id)))),
+                func.count(PriceObservation.actual_trading_value),
+                func.count(func.distinct(case((PriceObservation.market_cap.is_not(None), PriceObservation.security_id)))),
+            )
+            .outerjoin(PriceObservation, PriceObservation.security_id == SecurityRecord.id)
+            .where(
+                SecurityRecord.listing_status == "active",
+                SecurityRecord.security_type == "stock",
+            )
+            .group_by(SecurityRecord.exchange)
+        ).all()
+        price_coverage_by_exchange = {
+            exchange: {
+                "active_count": int(active_count),
+                "symbols_with_price": int(price_symbols),
+                "missing_price_count": int(active_count - price_symbols),
+                "observations": int(observation_count),
+                "symbols_with_actual_trading_value": int(actual_symbols),
+                "actual_trading_value_observations": int(actual_count),
+                "symbols_with_market_cap": int(market_cap_symbols),
+            }
+            for (
+                exchange,
+                active_count,
+                price_symbols,
+                observation_count,
+                actual_symbols,
+                actual_count,
+                market_cap_symbols,
+            ) in exchange_rows
+        }
         latest_market_timestamp_by_exchange = {
             exchange: timestamp
             for exchange, timestamp in session.execute(
@@ -320,6 +424,11 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
             )
             or 0
         )
+        actual_trading_value_observations_count = session.scalar(
+            select(func.count(PriceObservation.id)).where(
+                PriceObservation.actual_trading_value.is_not(None)
+            )
+        ) or 0
         health = {
             row.source_name: row for row in session.scalars(select(SourceHealthRecord)).all()
         }
@@ -376,6 +485,14 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         issues.append("Securities master mới là tập bootstrap, chưa có độ phủ toàn thị trường.")
     if index_payload.data_status == "unavailable":
         issues.append("Chưa có dữ liệu chỉ số thị trường được cấp quyền lưu trữ.")
+    if latest_freshness.status == "unconfirmed":
+        issues.append(
+            "Phiên giá gần nhất chỉ là weekday candidate; chưa có lịch giao dịch chính thức để xác nhận là realtime."
+        )
+    elif latest_freshness.status in {"delayed", "historical", "fixture", "stale"}:
+        issues.append(
+            f"Dữ liệu giá gần nhất được phân loại {latest_freshness.status}; không trình bày như realtime."
+        )
 
     return DataQualityReport(
         generated_at=datetime.now(UTC),
@@ -386,11 +503,24 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         price_observations_count=price_observations_count,
         price_sessions_count=price_sessions_count,
         price_sources=price_sources,
-        latest_price_freshness=_freshness_label(last_market_timestamp),
+        latest_price_freshness=latest_freshness.status,
+        latest_price_freshness_basis=latest_freshness.basis,
+        latest_price_session_status=latest_freshness.session_status,
+        price_coverage_by_session=price_coverage_by_session,
+        price_coverage_by_exchange=price_coverage_by_exchange,
         symbols_with_price_history=len(active_with_prices),
         symbols_missing_price_history=len(missing_price_symbols),
         symbols_with_financial_statements=len(active_with_financials),
         symbols_missing_financial_statements=len(missing_financial_symbols),
+        symbols_with_actual_trading_value=len(
+            [row for row in active_securities if row.id in security_ids_with_actual_values]
+        ),
+        actual_trading_value_observations_count=actual_trading_value_observations_count,
+        missing_actual_trading_value_symbols=missing_actual_trading_value_symbols[:50],
+        symbols_with_market_cap=len(
+            [row for row in active_securities if row.id in security_ids_with_market_cap]
+        ),
+        missing_market_cap_symbols=missing_market_cap_symbols[:50],
         price_coverage_percent=round(
             len(active_with_prices) / active_securities_count * 100, 2
         )
@@ -413,7 +543,9 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         stocks_with_20_sessions=universe.history_20_count,
         stocks_with_50_sessions=universe.history_50_count,
         stocks_with_200_sessions=universe.history_200_count,
-        stocks_with_market_cap=universe.market_cap_count,
+        stocks_with_market_cap=len(
+            [row for row in active_securities if row.id in security_ids_with_market_cap]
+        ),
         stocks_with_foreign_flow=universe.foreign_flow_count,
         universe_coverage_by_exchange={
             exchange: {"active_count": count}

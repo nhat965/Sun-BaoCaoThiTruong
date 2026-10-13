@@ -1,6 +1,7 @@
 # Production-readiness audit
 
-Audit target: `main` at `d2b428d` after Task 03 PR-A to PR-F.
+Audit target: `main` at `d2b428d`, hardened on branch
+`audit/market-data-production-readiness` in PR #17.
 
 ## Task 02 PR reconciliation
 
@@ -23,18 +24,21 @@ second time. A closed PR with `mergedAt=null` is expected in this situation.
 | Financial statements | 0/13 symbols | BLOCKED | Authorized CSV import exists; automatic provider is not entitled |
 
 The `/api/v1/data-quality` endpoint is the coverage dashboard/API. It exposes
-counts, distinct price sessions, observed providers, exchange distribution, history
-depth, missing symbols, source health, quality alerts, latest market/retrieval
-timestamps, freshness and index coverage. Fixture
-data is only enabled by `MARKET_DATA_MODE=fixture` and is labelled as synthetic.
+counts by market session and exchange, price/value/market-cap coverage, observed
+providers, history depth, missing symbols, source health, quality alerts, latest
+market/retrieval timestamps, freshness evidence and index coverage. Freshness is
+reported as `fresh`, `stale`, `delayed`, `historical`, `fixture`, `unconfirmed` or
+`unknown`; without an official exchange calendar a recent weekday is only a
+`weekday_candidate`, not proof of realtime data. Fixture data is only enabled by
+`MARKET_DATA_MODE=fixture` and is labelled as synthetic.
 
 ## Reproduced issues and fixes
 
 | Area | Reproduced issue | Fix |
 |---|---|---|
 | RVOL20 | A two-to-twenty-observation history produced an RVOL using an incomplete baseline | Require the current observation plus 20 baseline sessions; return `null` otherwise |
-| Freshness | Any non-empty current-session map was reported as `fresh`, including old timestamps | Classify from the newest market timestamp with a two-day threshold |
-| Session alignment | Index return used the two latest rows even when the newest index row did not match the requested stock session | Require an index observation on the requested session and select distinct session dates |
+| Freshness | Any non-empty current-session map was reported as `fresh`, including old timestamps | Use provenance, session date, official-calendar evidence when available, and a conservative `unconfirmed` fallback; age is only a stale signal |
+| Session alignment | Index return used the two latest rows even when the newest index row did not match the requested stock session | Require the target session and an evidenced prior session; reject suspicious weekday gaps, weekend gaps without alignment, and conflicting provider duplicates |
 | Idempotency | Replay behavior needed explicit regression coverage | Added replay coverage for risk and scenario snapshots; existing upsert constraints remain in place |
 
 No market values were fabricated while fixing these issues.
@@ -57,13 +61,21 @@ Run from `apps/api`:
 
 ```text
 python scripts/benchmark_market_analytics.py
+python scripts/benchmark_market_analytics_postgres.py --database-url "$BENCHMARK_DATABASE_URL"
 ```
 
 The benchmark uses a labelled synthetic fixture with 1,000 securities and 200
 sessions per security, performs RVOL/return/MA calculations and writes nothing to
-the database. The latest run processed 200,000 observations in 197.65 ms. Its
+the database. The latest run processed 200,000 observations in 197.82 ms. Its
 output is evidence of local computational cost only, not market coverage or data
 quality.
+
+The PostgreSQL benchmark creates a temporary schema, loads the same 1,000 × 200
+labelled fixture, measures canonical query, breadth, sector, liquidity and API
+response serialization P50/P95, query count and optional RSS memory, then drops
+the schema. It refuses SQLite and never uses application tables. It was not run
+locally because no PostgreSQL service was listening on port 5432; CI runs it
+against PostgreSQL 16.
 
 ## Verification commands
 
@@ -79,9 +91,9 @@ pip-audit
 npm audit --omit=dev --audit-level=high
 ```
 
-CI runs the same backend PostgreSQL migration cycle, tests, Ruff and dependency
-audit, plus the frontend lint/build and npm audit. Docker smoke remains dependent
-on a host with a Docker engine.
+CI runs the same backend PostgreSQL migration cycle, tests, Ruff, the isolated
+PostgreSQL benchmark and dependency audit, plus the frontend lint/build and npm
+audit. Docker smoke remains dependent on a host with a Docker engine.
 
 ## Roadmap
 

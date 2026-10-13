@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.database import MarketRiskSignalRecord, MarketScenarioSnapshotRecord, SessionLocal, init_db
-from app.main import app
-from app.market_trend import _aligned_index_change, _freshness
+from app.freshness import assess_freshness
+from app.main import _freshness_label, app
+from app.market_trend import _aligned_index_change, _aligned_index_change_detail, _freshness
 from app.sector_liquidity import (
     _aggregate_relative_volume,
     _relative_volume,
@@ -41,10 +42,50 @@ def test_rvol20_requires_a_complete_twenty_session_baseline():
 
 def test_freshness_is_stale_when_rows_exist_but_market_timestamp_is_old():
     old = SimpleNamespace(market_timestamp=datetime(2026, 10, 1, tzinfo=UTC))
-    recent = SimpleNamespace(market_timestamp=datetime(2026, 10, 13, tzinfo=UTC))
+    recent = SimpleNamespace(
+        market_timestamp=datetime(2026, 10, 13, tzinfo=UTC),
+        market_session_date=date(2026, 10, 13),
+        source_mode="live",
+        freshness="daily/delayed",
+    )
     reference = datetime(2026, 10, 14, tzinfo=UTC)
     assert _freshness({1: old}, now=reference) == "stale"
-    assert _freshness({1: recent}, now=reference) == "fresh"
+    assert _freshness({1: recent}, now=reference) == "delayed"
+    assert (
+        _freshness_label(
+            recent.market_timestamp,
+            market_session_date=recent.market_session_date,
+            source_mode=recent.source_mode,
+            provider_freshness=recent.freshness,
+            now=reference,
+        )
+        == "delayed"
+    )
+
+
+def test_freshness_distinguishes_fixture_and_unconfirmed_weekday_without_calendar():
+    fixture = SimpleNamespace(
+        market_timestamp=datetime(2026, 10, 13, tzinfo=UTC),
+        market_session_date=date(2026, 10, 13),
+        source_mode="fixture",
+        freshness="fixture",
+    )
+    weekday = SimpleNamespace(
+        market_timestamp=datetime(2026, 10, 13, tzinfo=UTC),
+        market_session_date=date(2026, 10, 13),
+        source_mode="live",
+        freshness="unknown",
+    )
+    reference = datetime(2026, 10, 14, tzinfo=UTC)
+    assert _freshness([fixture], now=reference) == "fixture"
+    assert _freshness([weekday], now=reference) == "unconfirmed"
+    assert assess_freshness(
+        market_timestamp=weekday.market_timestamp,
+        market_session_date=weekday.market_session_date,
+        source_mode="live",
+        now=reference,
+        official_sessions=[date(2026, 10, 13)],
+    ).status == "fresh"
 
 
 def test_index_change_requires_an_observation_on_the_requested_session():
@@ -54,6 +95,33 @@ def test_index_change_requires_an_observation_on_the_requested_session():
     ]
     assert _aligned_index_change(rows, date(2026, 10, 13)) == 20
     assert _aligned_index_change(rows, date(2026, 10, 14)) is None
+
+
+def test_index_session_alignment_handles_weekend_and_suspicious_holiday_gap():
+    monday_rows = [
+        SimpleNamespace(market_session_date=date(2026, 10, 12), close=120),
+        SimpleNamespace(market_session_date=date(2026, 10, 9), close=100),
+    ]
+    assert _aligned_index_change_detail(monday_rows, date(2026, 10, 12))[1] == "weekday_candidate_aligned"
+
+    holiday_gap_rows = [
+        SimpleNamespace(market_session_date=date(2026, 10, 13), close=120),
+        SimpleNamespace(market_session_date=date(2026, 10, 9), close=100),
+    ]
+    value, status = _aligned_index_change_detail(holiday_gap_rows, date(2026, 10, 13))
+    assert value is None
+    assert status == "unconfirmed_gap"
+
+
+def test_index_session_alignment_rejects_conflicting_provider_duplicates():
+    rows = [
+        SimpleNamespace(market_session_date=date(2026, 10, 13), close=120),
+        SimpleNamespace(market_session_date=date(2026, 10, 13), close=121),
+        SimpleNamespace(market_session_date=date(2026, 10, 12), close=100),
+    ]
+    value, status = _aligned_index_change_detail(rows, date(2026, 10, 13))
+    assert value is None
+    assert status == "duplicate_session_values"
 
 
 def test_risk_and_scenario_replays_are_idempotent():

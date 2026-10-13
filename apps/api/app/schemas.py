@@ -170,10 +170,19 @@ class DataQualityReport(BaseModel):
     price_sessions_count: int = 0
     price_sources: list[str] = Field(default_factory=list)
     latest_price_freshness: str = "unknown"
+    latest_price_freshness_basis: str = "unknown"
+    latest_price_session_status: str = "unknown"
+    price_coverage_by_session: dict[str, dict[str, int | float]] = Field(default_factory=dict)
+    price_coverage_by_exchange: dict[str, dict[str, int | float]] = Field(default_factory=dict)
     symbols_with_price_history: int = 0
     symbols_missing_price_history: int = 0
     symbols_with_financial_statements: int = 0
     symbols_missing_financial_statements: int = 0
+    symbols_with_actual_trading_value: int = 0
+    actual_trading_value_observations_count: int = 0
+    missing_actual_trading_value_symbols: list[str] = Field(default_factory=list)
+    symbols_with_market_cap: int = 0
+    missing_market_cap_symbols: list[str] = Field(default_factory=list)
     price_coverage_percent: float = Field(default=0, ge=0, le=100)
     financial_coverage_percent: float = Field(default=0, ge=0, le=100)
     missing_price_symbols: list[str] = Field(default_factory=list)

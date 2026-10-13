@@ -170,6 +170,7 @@ Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc
 ```bash
 cd apps/api && pytest
 cd apps/api && python scripts/benchmark_market_analytics.py
+cd apps/api && python scripts/benchmark_market_analytics_postgres.py --database-url "$BENCHMARK_DATABASE_URL"
 cd apps/web && npm run lint && npm run build
 ```
 
@@ -180,7 +181,7 @@ PostgreSQL 16 và chặn dependency production có lỗ hổng mức `high` tr�
 
 - Yahoo Finance không phải nguồn dữ liệu được cấp phép riêng cho sản phẩm này; cần thay bằng feed có hợp đồng trước khi phân phối thương mại.
 - Registry kèm theo chỉ là bootstrap 13 mã, được ghi nguồn rõ ràng; độ phủ đầy đủ cần file CSV được phép hoặc connector master-data có hợp đồng.
-- Trang chất lượng dữ liệu hiển thị độ phủ registry, số quan sát giá, mốc thị trường, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
+- Trang chất lượng dữ liệu hiển thị độ phủ theo market session/exchange, số mã có giá và actual trading value, mốc thị trường, freshness evidence, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
 - Pipeline BCTC, công thức nền tảng và DCF theo giả định người dùng đã có; chưa có credential provider tài chính live, peer set hoặc dải định giá lịch sử.
 - Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, live social feed hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.

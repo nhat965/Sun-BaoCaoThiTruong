@@ -54,6 +54,8 @@ jobs:
           alembic downgrade base
           alembic upgrade head
           alembic current
+      - name: Benchmark isolated PostgreSQL analytics fixture
+        run: python scripts/benchmark_market_analytics_postgres.py --database-url "$DATABASE_URL" --runs 3
       - name: Audit Python dependencies
         run: pip-audit
 

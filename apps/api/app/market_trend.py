@@ -22,6 +22,7 @@ from app.database import (
     SecurityRecord,
     SessionLocal,
 )
+from app.freshness import assess_rows, utc
 from app.price_integrity import canonical_daily_prices
 from app.schemas import MarketBreadthPoint, MarketBreadthResponse, MarketRegimeResponse
 
@@ -31,7 +32,7 @@ INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "UPCOMINDEX"}
 
 
 def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return utc(value)
 
 
 def _pct(numerator: int, denominator: int) -> float | None:
@@ -47,14 +48,9 @@ def _safe_ratio(numerator: int, denominator: int) -> float | None:
 
 
 def _freshness(rows: object | list[object] | tuple[object, ...], now: datetime | None = None) -> str:
-    """Classify freshness from the newest market timestamp, never from row presence."""
+    """Return conservative freshness, retaining provenance/session evidence."""
     values = rows.values() if isinstance(rows, dict) else rows if isinstance(rows, (list, tuple)) else [rows]
-    timestamps = [_utc(timestamp) for row in values if (timestamp := getattr(row, "market_timestamp", None))]
-    if not timestamps:
-        return "unknown"
-    reference = _utc(now or datetime.now(UTC))
-    age = reference - max(timestamps)
-    return "fresh" if age <= timedelta(days=2) else "stale"
+    return assess_rows(values, now=now).status
 
 
 def _history() -> tuple[list[SecurityRecord], dict[int, list[object]]]:
@@ -158,20 +154,57 @@ def _breadth_for_date(
     )
 
 
-def _aligned_index_change(rows: list[object], session_date: date) -> float | None:
-    """Return an index change only when the newest observation matches the target session."""
+def _candidate_previous_session(session_date: date) -> date:
+    candidate = session_date - timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _aligned_index_change_detail(
+    rows: list[object], session_date: date, official_sessions: set[date] | None = None
+) -> tuple[float | None, str]:
+    """Return one-session change only when the previous session is evidenced.
+
+    With an official calendar, the previous date must be the immediately prior
+    official session.  Without one, a weekday candidate is accepted only when
+    it matches the previous weekday (weekends are skipped); any weekday gap is
+    returned as ``unconfirmed_gap`` instead of silently skipping a holiday.
+    """
     by_session: dict[date, object] = {}
+    conflicting_sessions: set[date] = set()
     for row in rows:
         row_date = getattr(row, "market_session_date", None)
         if row_date is not None and row_date <= session_date:
+            existing = by_session.get(row_date)
+            if existing is not None and float(existing.close) != float(row.close):
+                conflicting_sessions.add(row_date)
             by_session.setdefault(row_date, row)
     ordered = [by_session[key] for key in sorted(by_session, reverse=True)]
     if len(ordered) < 2 or ordered[0].market_session_date != session_date:
-        return None
+        return None, "missing_target_session"
+    if conflicting_sessions:
+        return None, "duplicate_session_values"
     previous = ordered[1]
     if previous.close == 0:
-        return None
-    return round((float(ordered[0].close) / float(previous.close) - 1) * 100, 4)
+        return None, "invalid_previous_close"
+    previous_date = previous.market_session_date
+    if official_sessions:
+        eligible = sorted(item for item in official_sessions if item < session_date)
+        if not eligible or previous_date != eligible[-1]:
+            return None, "official_session_gap"
+        alignment = "official_aligned"
+    elif previous_date != _candidate_previous_session(session_date):
+        return None, "unconfirmed_gap"
+    else:
+        alignment = "weekday_candidate_aligned"
+    return round((float(ordered[0].close) / float(previous.close) - 1) * 100, 4), alignment
+
+
+def _aligned_index_change(rows: list[object], session_date: date) -> float | None:
+    """Compatibility wrapper returning only the verified change value."""
+    change, _ = _aligned_index_change_detail(rows, session_date)
+    return change
 
 
 def _index_change(session_date: date) -> float | None:
@@ -189,6 +222,23 @@ def _index_change(session_date: date) -> float | None:
             .limit(20)
         ).all()
     return _aligned_index_change(rows, session_date)
+
+
+def _index_change_detail(session_date: date) -> tuple[float | None, str]:
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(MarketIndexObservationRecord)
+            .where(
+                MarketIndexObservationRecord.symbol == "VNINDEX",
+                MarketIndexObservationRecord.market_session_date <= session_date,
+            )
+            .order_by(
+                MarketIndexObservationRecord.market_session_date.desc(),
+                MarketIndexObservationRecord.market_timestamp.desc(),
+            )
+            .limit(20)
+        ).all()
+    return _aligned_index_change_detail(rows, session_date)
 
 
 def _persist_breadth(response: MarketBreadthResponse) -> None:
@@ -307,10 +357,14 @@ def calculate_market_breadth(history_limit: int = 30, persist: bool = True) -> M
         for target in historical_dates
         if (historical_point := _breadth_for_date(securities, by_security, target)) is not None
     ]
-    index_change = _index_change(session_date)
+    index_change, index_alignment = _index_change_detail(session_date)
     divergences: list[str] = []
     if index_change is None:
-        index_limit = "Chưa có VN-Index được cấp quyền; không kết luận phân kỳ với chỉ số."
+        index_limit = (
+            "Chưa có VN-Index được cấp quyền; không kết luận phân kỳ với chỉ số."
+            if index_alignment == "missing_target_session"
+            else f"Không thể xác nhận phiên liền trước của VN-Index ({index_alignment}); không tính phân kỳ."
+        )
     else:
         index_limit = None
         if index_change > 0 and decliners > advancers:
@@ -348,6 +402,7 @@ def calculate_market_breadth(history_limit: int = 30, persist: bool = True) -> M
             "ma20_eligible_count": ma20_den,
             "ma50_eligible_count": ma50_den,
             "ma200_eligible_count": ma200_den,
+            "index_session_alignment_verified": int(index_change is not None),
         },
         advancers=advancers,
         decliners=decliners,
