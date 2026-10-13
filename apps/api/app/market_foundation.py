@@ -164,6 +164,27 @@ def _decimal(value: str | None, field: str, *, required: bool = False) -> Decima
     return result
 
 
+def _same_index_value(existing: object, incoming: object) -> bool:
+    """Compare persisted and imported values without representation noise.
+
+    PostgreSQL may normalize timezone-aware datetimes to UTC and Numeric values
+    to a fixed scale. Both representations are semantically identical for
+    replay protection, so compare them in their canonical forms.
+    """
+    if isinstance(existing, datetime) and isinstance(incoming, datetime):
+        if existing.tzinfo is None:
+            existing = existing.replace(tzinfo=UTC)
+        if incoming.tzinfo is None:
+            incoming = incoming.replace(tzinfo=UTC)
+        return existing.astimezone(UTC) == incoming.astimezone(UTC)
+    if isinstance(existing, Decimal) or isinstance(incoming, Decimal):
+        try:
+            return Decimal(str(existing)) == Decimal(str(incoming))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+    return existing == incoming
+
+
 def import_market_indices(csv_content: str, source_name: str) -> MarketIndexImportResult:
     required = {
         "symbol",
@@ -242,7 +263,10 @@ def import_market_indices(csv_content: str, source_name: str) -> MarketIndexImpo
                 if existing is None:
                     session.add(MarketIndexObservationRecord(**values))
                     result.inserted += 1
-                elif all(getattr(existing, key) == values[key] for key in material_keys) or (
+                elif all(
+                    _same_index_value(getattr(existing, key), values[key])
+                    for key in material_keys
+                ) or (
                     existing.validation_status == "valid"
                     and validation_status != "valid"
                 ):
