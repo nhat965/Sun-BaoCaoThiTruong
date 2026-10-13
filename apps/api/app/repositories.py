@@ -31,6 +31,7 @@ from app.financial_normalization import (
     normalize_currency,
     normalize_period_type,
 )
+from app.financial_validation import ValidationIssue, validate_period
 from app.price_integrity import market_session_date, provider_id_for
 from app.schemas import (
     FinancialInputs,
@@ -656,37 +657,34 @@ class FinancialRepository:
                 )
             )
             values = {item.item_code: Decimal(item.value) for item in period_items}
-            checks = ["schema", "period_identity", "unit_normalization"]
-            report_errors: list[str] = []
-            report_warnings = list(dict.fromkeys(import_warnings))
-            if not period.source_url:
-                report_warnings.append("source_url is missing")
-            equation_keys = {"total_assets", "total_liabilities", "total_equity"}
-            if equation_keys.issubset(values):
-                checks.append("balance_sheet_equation")
-                assets = values["total_assets"]
-                right_side = values["total_liabilities"] + values["total_equity"]
-                tolerance = max(Decimal(1), abs(assets) * Decimal("0.001"))
-                if abs(assets - right_side) > tolerance:
-                    report_errors.append(
-                        "balance equation failed: total_assets != total_liabilities + total_equity"
-                    )
-                    serious_validation_error = True
-            else:
-                report_warnings.append(
-                    "balance equation not checked because required items are missing"
-                )
-            for code in ("total_assets", "total_liabilities", "shares_outstanding"):
-                if code in values and values[code] < 0:
-                    report_errors.append(f"{code} must not be negative")
-                    serious_validation_error = True
-            status = (
-                "rejected"
-                if report_errors
-                else "warning"
-                if report_warnings
-                else "valid"
+            validation = validate_period(
+                period_type=period.period_type,
+                period_start=period.period_start,
+                period_end=period.period_end,
+                reported_at=period.reported_at,
+                currency=period.currency,
+                statement_scope=period.statement_scope,
+                statement_status=period.statement_status,
+                source_name=period.source_name,
+                source_url=period.source_url,
+                values=values,
             )
+            issues = list(validation.issues)
+            issues.extend(
+                ValidationIssue(
+                    code="import_warning",
+                    severity="warning",
+                    message=warning,
+                    source_name=period.source_name,
+                )
+                for warning in dict.fromkeys(import_warnings)
+            )
+            report_errors = [issue.message for issue in issues if issue.severity == "error"]
+            report_warnings = [
+                issue.message for issue in issues if issue.severity == "warning"
+            ]
+            status = "invalid" if report_errors else validation.status
+            serious_validation_error = serious_validation_error or bool(report_errors)
             validation_reports.append(
                 FinancialValidationReport(
                     symbol=security.symbol,
@@ -696,10 +694,11 @@ class FinancialRepository:
                     statement_status=period.statement_status,
                     source_name=period.source_name,
                     source_url=period.source_url,
-                    checks=checks,
+                    checks=validation.checks,
                     errors=report_errors,
                     warnings=report_warnings,
                     validation_status=status,
+                    issues=[issue.__dict__ for issue in issues],
                     created_at=created_at,
                 )
             )
@@ -739,6 +738,10 @@ class FinancialRepository:
                     source_name=report.source_name,
                     source_url=report.source_url,
                     checks_json=json.dumps(report.checks),
+                    issues_json=json.dumps(
+                        [issue.model_dump() for issue in report.issues],
+                        ensure_ascii=False,
+                    ),
                     errors_json=json.dumps(report.errors),
                     warnings_json=json.dumps(report.warnings),
                     validation_status=report.validation_status,
@@ -880,6 +883,7 @@ class FinancialRepository:
                 errors=json.loads(row.errors_json),
                 warnings=json.loads(row.warnings_json),
                 validation_status=row.validation_status,
+                issues=json.loads(getattr(row, "issues_json", "[]")),
                 created_at=row.created_at,
             )
             for row in rows

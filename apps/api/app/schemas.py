@@ -318,6 +318,14 @@ class FinancialStatementImportResult(BaseModel):
     validation_reports: list["FinancialValidationReport"] = Field(default_factory=list)
 
 
+class FinancialValidationIssue(BaseModel):
+    code: str
+    severity: Literal["warning", "error"]
+    message: str
+    item_code: str | None = None
+    source_name: str | None = None
+
+
 class FinancialValidationReport(BaseModel):
     symbol: str
     period_end: datetime
@@ -329,7 +337,10 @@ class FinancialValidationReport(BaseModel):
     checks: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    validation_status: Literal["valid", "warning", "rejected"]
+    validation_status: Literal[
+        "valid", "warning", "invalid", "insufficient_data", "rejected"
+    ]
+    issues: list[FinancialValidationIssue] = Field(default_factory=list)
     created_at: datetime
 
 

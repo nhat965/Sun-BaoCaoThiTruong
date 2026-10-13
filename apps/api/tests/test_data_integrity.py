@@ -10,7 +10,13 @@ from sqlalchemy import delete, func, select
 from app.analytics.fundamental import calculate_financial_metrics
 from app.auth import admin_rate_limiter
 from app.config import Settings, get_settings
-from app.database import PriceObservation, SecurityRecord, SessionLocal, init_db
+from app.database import (
+    FinancialPeriodRecord,
+    PriceObservation,
+    SecurityRecord,
+    SessionLocal,
+    init_db,
+)
 from app.main import app
 from app.registry import seed_registry_if_empty
 from app.repositories import FinancialRepository, PriceRepository
@@ -156,6 +162,34 @@ def test_identical_financial_replay_is_skipped_and_versions_are_preserved():
         if period.period_end.year == 2040
     }
     assert versions == {("original", 100_000_000), ("amended", 110_000_000)}
+
+
+def test_strict_financial_validation_rolls_back_invalid_period_and_keeps_report():
+    content = (
+        "period_end,period_type,fiscal_year,statement_type,item_code,value,unit,"
+        "statement_scope,statement_status,source_url\n"
+        "2041-12-31T00:00:00+00:00,year,2041,balance,total_assets,100,VND,"
+        "consolidated,original,https://example.com/invalid\n"
+        "2041-12-31T00:00:00+00:00,year,2041,balance,total_liabilities,20,VND,"
+        "consolidated,original,https://example.com/invalid\n"
+        "2041-12-31T00:00:00+00:00,year,2041,balance,total_equity,60,VND,"
+        "consolidated,original,https://example.com/invalid\n"
+    )
+    with SessionLocal() as session:
+        result = FinancialRepository(session).import_csv(
+            "HPG", content, "authorized-test", strict=True
+        )
+        assert result.rejected > 0
+        assert result.validation_reports[0].validation_status == "invalid"
+        assert any(
+            issue.code == "balance_equation_mismatch"
+            for issue in result.validation_reports[0].issues
+        )
+        assert not session.scalar(
+            select(FinancialPeriodRecord).where(
+                FinancialPeriodRecord.period_end == datetime(2041, 12, 31, tzinfo=UTC)
+            )
+        )
 
 
 def test_roic_uses_nopat_and_average_invested_capital():

@@ -207,6 +207,7 @@ class FinancialValidationReportRecord(Base):
     source_name: Mapped[str] = mapped_column(String(128))
     source_url: Mapped[str | None] = mapped_column(String(1024))
     checks_json: Mapped[str] = mapped_column(Text, default="[]")
+    issues_json: Mapped[str] = mapped_column(Text, default="[]")
     errors_json: Mapped[str] = mapped_column(Text, default="[]")
     warnings_json: Mapped[str] = mapped_column(Text, default="[]")
     validation_status: Mapped[str] = mapped_column(String(24), index=True)
