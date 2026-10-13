@@ -55,6 +55,8 @@ def test_pdf_report_and_validation():
         assert report.status_code == 200
         assert report.headers["content-type"] == "application/pdf"
         assert report.content.startswith(b"%PDF")
+        assert b"MarketReportUnicode" in report.content
+        assert b"/ToUnicode" in report.content
         assert client.get("/api/v1/stocks/search", params={"q": ""}).status_code == 422
 
 
