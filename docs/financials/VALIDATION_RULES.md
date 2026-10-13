@@ -31,4 +31,3 @@ stable code, severity, message, item code and source name.
 Strict financial synchronization rolls back inserted periods/items when an
 invalid report is produced, while retaining a report with `period_id = null`
 for audit. Missing inputs never become zero and do not receive a verified label.
-
