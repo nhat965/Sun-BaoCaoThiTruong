@@ -6,6 +6,7 @@ os.environ["MARKET_DATA_MODE"] = "fixture"
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
+from app.auth import admin_rate_limiter
 from app.config import Settings, get_settings
 from app.database import PriceObservation, SecurityRecord, SessionLocal
 from app.main import app
@@ -160,7 +161,6 @@ def test_automatic_financial_sync_records_blocked_state_and_quality_error():
 def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
     import httpx
 
-    from app.auth import admin_rate_limiter
 
     csv_data = (
         "period_end,period_type,fiscal_year,statement_type,item_code,value,unit,"
