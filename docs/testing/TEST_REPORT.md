@@ -20,6 +20,13 @@ Date: 2026-10-14 (Asia/Bangkok)
 
 Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
 
+The latest CI PostgreSQL fixture benchmark (1,000 × 200, 3 runs) measured P50/P95
+of 732.134/733.884 ms for canonical selection, 254.619/256.252 ms for breadth,
+258.411/259.774 ms for sectors, 271.031/271.146 ms for liquidity, and
+0.045/0.045 ms for response serialization. Each database operation used one
+query; the temporary schema was dropped after the run. RSS was not available
+because `psutil` is optional.
+
 Task 02 regressions additionally verify explicit provider capability gates, initial versus
 incremental price sync, persisted run/error counts, financial unit conversion, retention
 of raw value/unit, refusal to overwrite verified BCTC with unverified input, normalized

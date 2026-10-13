@@ -77,6 +77,20 @@ the schema. It refuses SQLite and never uses application tables. It was not run
 locally because no PostgreSQL service was listening on port 5432; CI runs it
 against PostgreSQL 16.
 
+Latest CI run (3 measured runs per operation):
+
+| Operation | P50 | P95 | Queries/run | Rows |
+|---|---:|---:|---:|---:|
+| Canonical query | 732.134 ms | 733.884 ms | 1 | 200,000 |
+| Market breadth | 254.619 ms | 256.252 ms | 1 | 1 |
+| Sectors | 258.411 ms | 259.774 ms | 1 | 20 |
+| Liquidity | 271.031 ms | 271.146 ms | 1 | 20 |
+| API response serialization | 0.045 ms | 0.045 ms | 0 | 575 bytes |
+
+RSS memory was unavailable in the CI runner because `psutil` is optional; the
+benchmark still records query count and timing. These figures describe the
+labelled fixture and CI hardware, not production capacity.
+
 ## Verification commands
 
 ```text
