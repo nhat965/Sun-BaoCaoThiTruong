@@ -24,10 +24,13 @@ def validate_bar(bar: PriceBar) -> list[str]:
     return errors
 
 
-def normalize_price_series(series: PriceSeries) -> PriceSeries:
+def normalize_price_series(
+    series: PriceSeries, *, allow_empty: bool = False
+) -> PriceSeries:
     normalized: dict[str, PriceBar] = {}
     invalid: list[str] = []
     duplicate_count = 0
+    conflicting_duplicates = 0
     for bar in series.bars:
         errors = validate_bar(bar)
         if errors:
@@ -36,6 +39,11 @@ def normalize_price_series(series: PriceSeries) -> PriceSeries:
         timestamp = bar.timestamp.astimezone(UTC)
         if timestamp.isoformat() in normalized:
             duplicate_count += 1
+            previous = normalized[timestamp.isoformat()]
+            if previous.model_dump(exclude={"timestamp"}) != bar.model_dump(
+                exclude={"timestamp"}
+            ):
+                conflicting_duplicates += 1
         normalized[timestamp.isoformat()] = bar.model_copy(update={"timestamp": timestamp})
     if invalid:
         raise ConnectorError(
@@ -43,15 +51,21 @@ def normalize_price_series(series: PriceSeries) -> PriceSeries:
             f"Mẫu lỗi: {invalid[0]}"
         )
     bars = sorted(normalized.values(), key=lambda item: item.timestamp)
-    if not bars:
+    if not bars and not allow_empty:
         raise ConnectorError("Chuỗi giá không có quan sát hợp lệ sau chuẩn hóa.")
     notes = series.provenance.notes
     if duplicate_count:
         duplicate_note = f"{duplicate_count} duplicate timestamp(s) collapsed during normalization."
         notes = f"{notes}; {duplicate_note}" if notes else duplicate_note
+    if conflicting_duplicates:
+        conflict_note = (
+            f"{conflicting_duplicates} duplicate timestamp(s) had conflicting OHLCV; "
+            "the last provider observation was retained."
+        )
+        notes = f"{notes}; {conflict_note}" if notes else conflict_note
     provenance = series.provenance.model_copy(
         update={
-            "market_timestamp": bars[-1].timestamp,
+            "market_timestamp": bars[-1].timestamp if bars else series.provenance.market_timestamp,
             "validation_status": "valid",
             "notes": notes,
         }

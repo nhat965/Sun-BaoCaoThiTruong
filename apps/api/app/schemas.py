@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 class Provenance(BaseModel):
     source: str
+    provider_id: str | None = None
     source_url: str | None = None
     provider_symbol: str
     retrieved_at: datetime
@@ -203,8 +204,13 @@ class SecuritiesExplorerItem(BaseModel):
     pe: float | None = None
     pb: float | None = None
     price_updated_at: datetime | None = None
+    market_session_date: date | None = None
+    price_retrieved_at: datetime | None = None
     price_source: str | None = None
     price_source_mode: str | None = None
+    price_validation_status: str | None = None
+    price_trust_status: Literal["trusted", "development_only", "fixture"] | None = None
+    price_is_stale: bool | None = None
     registry_updated_at: datetime
 
 
@@ -243,22 +249,37 @@ class CorporateActionImportResult(BaseModel):
 class FinancialInputs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    entity_type: Literal["non_financial", "bank", "securities", "insurance"] = (
+        "non_financial"
+    )
     revenue: float | None = None
     prior_revenue: float | None = None
+    previous_period_revenue: float | None = None
+    ttm_revenue: float | None = None
     net_income: float | None = None
     prior_net_income: float | None = None
+    previous_period_net_income: float | None = None
+    ttm_net_income: float | None = None
+    period_months: int | None = Field(default=None, ge=1, le=12)
     total_assets: float | None = None
     prior_total_assets: float | None = None
     total_equity: float | None = None
     prior_total_equity: float | None = None
     total_debt: float | None = None
+    prior_total_debt: float | None = None
+    cash_and_equivalents: float | None = None
+    prior_cash_and_equivalents: float | None = None
     current_assets: float | None = None
     current_liabilities: float | None = None
     operating_income: float | None = None
+    profit_before_tax: float | None = None
+    tax_expense: float | None = None
     gross_profit: float | None = None
     interest_expense: float | None = None
     operating_cash_flow: float | None = None
+    ttm_operating_cash_flow: float | None = None
     capital_expenditure: float | None = None
+    ttm_capital_expenditure: float | None = None
     shares_outstanding: float | None = None
     market_price: float | None = None
     enterprise_value: float | None = None
@@ -294,6 +315,22 @@ class FinancialStatementImportResult(BaseModel):
     skipped_items: int = 0
     rejected: int
     errors: list[str]
+    validation_reports: list["FinancialValidationReport"] = Field(default_factory=list)
+
+
+class FinancialValidationReport(BaseModel):
+    symbol: str
+    period_end: datetime
+    period_type: Literal["quarter", "year", "ttm"]
+    statement_scope: Literal["consolidated", "separate"]
+    statement_status: Literal["original", "amended"]
+    source_name: str
+    source_url: str | None = None
+    checks: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    validation_status: Literal["valid", "warning", "rejected"]
+    created_at: datetime
 
 
 class FinancialStatementItem(BaseModel):

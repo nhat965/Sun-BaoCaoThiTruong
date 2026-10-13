@@ -79,6 +79,7 @@ from app.schemas import (
     FinancialStatementImportResult,
     FinancialStatementsResponse,
     FinancialTrendResponse,
+    FinancialValidationReport,
     JobRequest,
     JobResult,
     MarketOverview,
@@ -681,6 +682,21 @@ def financial_statements(
                 statement_scope=statement_scope,
                 limit=limit,
             )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/v1/stocks/{symbol}/financials/validation-reports",
+    response_model=list[FinancialValidationReport],
+)
+def financial_validation_reports(
+    symbol: str,
+    limit: int = Query(50, ge=1, le=200),
+) -> list[FinancialValidationReport]:
+    try:
+        with SessionLocal() as session:
+            return FinancialRepository(session).validation_reports(symbol, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

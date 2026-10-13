@@ -1,8 +1,6 @@
 import json
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
 
-import httpx
 from sqlalchemy import func, select
 
 from app.config import Settings
@@ -19,6 +17,7 @@ from app.database import (
 from app.normalization import normalize_price_series
 from app.repositories import FinancialRepository, PriceRepository, SourceHealthRepository
 from app.schemas import DataSyncRun, ProviderCapabilityStatus
+from app.secure_http import SecureFetchError, fetch_authorized_csv, validate_https_destination
 
 
 def sync_run_schema(row: DataSyncRunRecord) -> DataSyncRun:
@@ -327,14 +326,15 @@ class DataSyncService:
         )
         try:
             series = normalize_price_series(
-                await provider.prices_since(symbol, cursor, limit)
+                await provider.prices_since(symbol, cursor, limit),
+                allow_empty=cursor is not None,
             )
             with SessionLocal() as session:
                 counts = PriceRepository(session).upsert_series_with_counts(series)
                 row = session.get(DataSyncRunRecord, run_id)
                 row.status = "SUCCESS"
                 row.finished_at = datetime.now(UTC)
-                row.cursor_to = series.bars[-1].timestamp
+                row.cursor_to = series.bars[-1].timestamp if series.bars else cursor
                 row.inserted_count = counts.inserted
                 row.updated_count = counts.updated
                 row.skipped_count = counts.skipped
@@ -398,41 +398,41 @@ class DataSyncService:
         if template.count("{symbol}") != 1:
             return self._blocked(symbol, "BLOCKED: URL template must contain {symbol} exactly once.")
         url = template.replace("{symbol}", symbol)
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.fragment
-            or parsed.port not in (None, 443)
-        ):
-            return self._blocked(symbol, "BLOCKED: financial feed must use an HTTPS URL without embedded credentials.")
+        allowed_hosts = {
+            host.strip().rstrip(".").lower()
+            for host in self.settings.financial_csv_allowed_hosts.split(",")
+            if host.strip()
+        }
+        try:
+            source_host = validate_https_destination(url, allowed_hosts)
+        except SecureFetchError as exc:
+            return self._blocked(symbol, f"BLOCKED: {exc}")
         run_id = self._start(
             "authorized_https_csv", DataCapability.INCOME_STATEMENT, symbol, "incremental", None
         )
         try:
-            headers = {"Accept": "text/csv"}
-            if self.settings.financial_csv_bearer_token:
-                headers["Authorization"] = f"Bearer {self.settings.financial_csv_bearer_token}"
-            with httpx.Client(
-                timeout=self.settings.request_timeout_seconds,
-                follow_redirects=False,
-            ) as client:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
-                if response.is_redirect:
-                    raise ValueError("Redirects from the licensed source are not allowed")
-                if len(response.content) > self.settings.max_request_bytes:
-                    raise ValueError("Financial feed exceeds MAX_REQUEST_BYTES")
-                payload = response.content.decode("utf-8-sig")
+            payload = fetch_authorized_csv(
+                url,
+                allowed_hosts=allowed_hosts,
+                bearer_token=self.settings.financial_csv_bearer_token,
+                timeout_seconds=self.settings.request_timeout_seconds,
+                max_bytes=min(
+                    self.settings.financial_csv_max_bytes,
+                    self.settings.max_request_bytes,
+                ),
+                retries=self.settings.financial_csv_retries,
+            )
             with SessionLocal() as session:
                 imported = FinancialRepository(session).import_csv(
-                    symbol, payload, "authorized_https_csv"
+                    symbol,
+                    payload,
+                    "authorized_https_csv",
+                    strict=True,
+                    accept_verified_status=False,
                 )
             with SessionLocal() as session:
                 row = session.get(DataSyncRunRecord, run_id)
-                row.status = "PARTIAL" if imported.rejected else "SUCCESS"
+                row.status = "FAILED" if imported.rejected else "SUCCESS"
                 row.inserted_count = imported.inserted_items
                 row.updated_count = imported.updated_items
                 row.skipped_count = imported.skipped_items
@@ -442,8 +442,15 @@ class DataSyncService:
                 )
                 row.finished_at = datetime.now(UTC)
                 row.details_json = json.dumps(
-                    {"source_url": url, "inserted_periods": imported.inserted_periods,
-                     "updated_periods": imported.updated_periods, "status": row.status}
+                    {
+                        "source_host": source_host,
+                        "inserted_periods": imported.inserted_periods,
+                        "updated_periods": imported.updated_periods,
+                        "validation_statuses": sorted(
+                            {report.validation_status for report in imported.validation_reports}
+                        ),
+                        "status": row.status,
+                    }
                 )
                 SourceHealthRepository(session).record(
                     "authorized_https_csv",
@@ -453,7 +460,7 @@ class DataSyncService:
                 session.commit()
                 session.refresh(row)
                 return sync_run_schema(row)
-        except (httpx.HTTPError, UnicodeError, ValueError) as exc:
+        except (SecureFetchError, ValueError) as exc:
             # Do not log tokens, response bodies or request URLs containing secrets.
             message = f"Authorized financial CSV sync failed: {type(exc).__name__}"
             with SessionLocal() as session:

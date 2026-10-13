@@ -180,8 +180,13 @@ export interface SecuritiesExplorerItem {
   pe: number | null;
   pb: number | null;
   price_updated_at: string | null;
+  market_session_date: string | null;
+  price_retrieved_at: string | null;
   price_source: string | null;
   price_source_mode: string | null;
+  price_validation_status: string | null;
+  price_trust_status: "trusted" | "development_only" | "fixture" | null;
+  price_is_stale: boolean | null;
   registry_updated_at: string;
 }
 

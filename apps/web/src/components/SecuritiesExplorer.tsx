@@ -327,7 +327,17 @@ function SecurityRow({
       <td data-label="GTGD" className="numeric">{item.trading_value === null ? <MissingValue /> : formatTradingValue(item.trading_value)}</td>
       <td data-label="P/E" className="numeric">{item.pe === null ? <MissingValue /> : decimal.format(item.pe)}</td>
       <td data-label="P/B" className="numeric">{item.pb === null ? <MissingValue /> : decimal.format(item.pb)}</td>
-      <td data-label="Cập nhật giá"><span>{updatedAt ?? <MissingValue />}</span>{item.price_source && <small>{item.price_source}{item.price_source_mode === "fixture" ? " · fixture" : ""}</small>}</td>
+      <td data-label="Cập nhật giá">
+        <span>{updatedAt ?? <MissingValue />}</span>
+        {item.price_source && (
+          <small>
+            {item.price_source}
+            {item.price_trust_status === "fixture" ? " · fixture" : ""}
+            {item.price_trust_status === "development_only" ? " · nguồn phát triển" : ""}
+            {item.price_is_stale ? " · dữ liệu cũ" : ""}
+          </small>
+        )}
+      </td>
       <td data-label="Thao tác"><button type="button" className="analyze-button" onClick={onAnalyze}>Xem phân tích</button></td>
     </tr>
   );

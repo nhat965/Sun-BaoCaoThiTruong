@@ -3,9 +3,10 @@
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import select
 
-from app.database import PriceObservation, ReportSnapshotRecord, SecurityRecord, SessionLocal
+from app.database import ReportSnapshotRecord, SecurityRecord, SessionLocal
+from app.price_integrity import canonical_daily_prices
 from app.schemas import DailyMarketReport, MarketIndexObservation, MarketOverview
 
 
@@ -20,24 +21,10 @@ def build_market_overview() -> MarketOverview:
                 select(SecurityRecord).where(SecurityRecord.listing_status == "active")
             ).all()
         )
-        ranked = (
-            select(
-                PriceObservation.security_id.label("security_id"),
-                PriceObservation.close.label("close"),
-                PriceObservation.volume.label("volume"),
-                PriceObservation.market_timestamp.label("market_timestamp"),
-                PriceObservation.provider.label("provider"),
-                PriceObservation.source_mode.label("source_mode"),
-                func.row_number()
-                .over(
-                    partition_by=PriceObservation.security_id,
-                    order_by=desc(PriceObservation.market_timestamp),
-                )
-                .label("position"),
-            )
-            .subquery()
-        )
-        rows = session.execute(select(ranked).where(ranked.c.position <= 2)).all()
+        ranked = canonical_daily_prices()
+        rows = session.execute(
+            select(ranked).where(ranked.c.session_rank <= 2)
+        ).all()
 
     observations = defaultdict(list)
     for row in rows:

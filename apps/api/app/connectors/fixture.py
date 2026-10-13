@@ -42,6 +42,7 @@ class FixtureConnector(MarketDataConnector):
             bars=bars,
             provenance=Provenance(
                 source=self.name,
+                provider_id=self.provider_id,
                 provider_symbol=f"{security.symbol}.FIXTURE",
                 retrieved_at=datetime.now(UTC),
                 market_timestamp=bars[-1].timestamp,
