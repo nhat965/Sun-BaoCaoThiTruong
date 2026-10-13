@@ -12,7 +12,7 @@ from statistics import mean
 from sqlalchemy import select
 
 from app.database import LiquiditySnapshotRecord, SectorSnapshotRecord, SessionLocal
-from app.market_trend import _history, _latest_session
+from app.market_trend import _aligned_index_change, _freshness, _history, _latest_session
 from app.schemas import (
     LiquidityLeader,
     LiquidityResponse,
@@ -53,12 +53,29 @@ def _return(history: list[object], period: int) -> float | None:
 
 
 def _relative_volume(history: list[object]) -> float | None:
-    if len(history) < 2:
+    if len(history) < 21:
         return None
-    baseline = [float(item.volume) for item in history[1:21]]
-    if not baseline or mean(baseline) == 0:
+    return _relative_volume_from_values(
+        float(history[0].volume), [float(item.volume) for item in history[1:21]]
+    )
+
+
+def _relative_volume_from_values(current: float, baseline: list[float]) -> float | None:
+    """Calculate RVOL20 only with a complete 20-session baseline."""
+    if len(baseline) < 20 or mean(baseline) == 0:
         return None
-    return float(history[0].volume) / mean(baseline)
+    return current / mean(baseline)
+
+
+def _aggregate_relative_volume(
+    volume_by_session: dict[date, int], sessions: list[date]
+) -> float | None:
+    if len(sessions) < 21:
+        return None
+    return _relative_volume_from_values(
+        float(volume_by_session[sessions[0]]),
+        [float(volume_by_session[item]) for item in sessions[1:21]],
+    )
 
 
 def _above_ma(history: list[object], period: int) -> bool | None:
@@ -165,11 +182,9 @@ def _index_return_1d(current_date: date) -> float | None:
                 MarketIndexObservationRecord.market_session_date.desc(),
                 MarketIndexObservationRecord.market_timestamp.desc(),
             )
-            .limit(2)
+            .limit(20)
         ).all()
-    if len(rows) < 2 or rows[1].close == 0:
-        return None
-    return (float(rows[0].close) / float(rows[1].close) - 1) * 100
+    return _aligned_index_change(rows, current_date)
 
 
 def _persist_sector(response: SectorIntelligenceResponse) -> None:
@@ -226,6 +241,7 @@ def calculate_sectors(sort_by: str = "performance_1d", sector_filter: str | None
         names = {key: value for key, value in names.items() if key == normalized or value.lower() == sector_filter.lower()}
     current_rows = [current[item.id] for item in classified if item.id in current]
     data_mode, validation_status = _provenance(current_rows)
+    freshness = _freshness(current_rows)
     index_return = _index_return_1d(session_date)
     sectors = [
         _sector_metric(sector_id, name, securities, by_security, session_date, index_return)
@@ -253,6 +269,7 @@ def calculate_sectors(sort_by: str = "performance_1d", sector_filter: str | None
         source=source,
         data_mode=data_mode,
         validation_status=validation_status,
+        freshness=freshness,
         sort_by=sort_key,
         coverage={
             "universe_count": len(securities),
@@ -319,6 +336,7 @@ def calculate_liquidity() -> LiquidityResponse:
     current_stocks = [item for item in securities if item.id in current]
     current_rows = [current[item.id] for item in current_stocks]
     data_mode, validation_status = _provenance(current_rows)
+    freshness = _freshness(current_rows)
     sessions = sorted({row.market_session_date for values in by_security.values() for row in values}, reverse=True)
     volume_by_session: dict[date, int] = defaultdict(int)
     value_by_session: dict[date, float] = defaultdict(float)
@@ -381,6 +399,7 @@ def calculate_liquidity() -> LiquidityResponse:
         source=source,
         data_mode=data_mode,
         validation_status=validation_status,
+        freshness=freshness,
         coverage={
             "universe_count": len(securities),
             "current_session_count": len(current_stocks),
@@ -391,11 +410,7 @@ def calculate_liquidity() -> LiquidityResponse:
         average_volume_5=_average(volume_windows[5]),
         average_volume_10=_average(volume_windows[10]),
         average_volume_20=_average(volume_windows[20]),
-        relative_volume=(
-            _pct(total_volume / mean(volume_windows[20][1:]))
-            if len(volume_windows[20]) > 1 and mean(volume_windows[20][1:])
-            else None
-        ),
+        relative_volume=_pct(_aggregate_relative_volume(volume_by_session, sessions)),
         total_actual_trading_value=sum(values) if values else None,
         average_actual_trading_value_5=_average(value_windows[5]),
         average_actual_trading_value_10=_average(value_windows[10]),

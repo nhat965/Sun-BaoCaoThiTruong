@@ -1,23 +1,31 @@
 # Test report — V4.1 Task 02
 
-Date: 2026-10-13 (Asia/Bangkok)
+Date: 2026-10-14 (Asia/Bangkok)
 
 ## Automated checks
 
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 55 tests |
+| Backend `pytest -q` | PASS — 101 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0013` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0020` | PASS — temporary SQLite database |
 | CI PostgreSQL migration gate | CONFIGURED — PostgreSQL 16 service, full upgrade/downgrade/re-upgrade |
-| Dependency audit gate | CONFIGURED — `pip-audit` and production `npm audit` at high severity |
+| Dependency audit | PASS — `pip-audit` no known vulnerabilities; production `npm audit` 0 vulnerabilities |
+| Market analytics benchmark | PASS — labelled in-process fixture, 1,000 symbols × 200 sessions, 197.82 ms, no writes; PostgreSQL benchmark added to CI |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
 | Impeccable UI detector | PASS — one side-border warning found and removed in the changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
 
 Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+
+The latest CI PostgreSQL fixture benchmark (1,000 × 200, 3 runs) measured P50/P95
+of 732.134/733.884 ms for canonical selection, 254.619/256.252 ms for breadth,
+258.411/259.774 ms for sectors, 271.031/271.146 ms for liquidity, and
+0.045/0.045 ms for response serialization. Each database operation used one
+query; the temporary schema was dropped after the run. RSS was not available
+because `psutil` is optional.
 
 Task 02 regressions additionally verify explicit provider capability gates, initial versus
 incremental price sync, persisted run/error counts, financial unit conversion, retention
@@ -30,7 +38,7 @@ server pagination, HPG analysis navigation, local watchlist persistence, explici
 values for ACV, and layouts at 1440px and 390×844 without page-level horizontal overflow.
 The browser console contained no warnings or errors.
 
-Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate.
+Financial regressions verify same-quarter prior-year growth selection and DCF sensitivity cells, including explicit nulls when terminal growth is not below the discount rate. Market analytics regressions also verify complete RVOL20 baselines, delayed/fixture/unconfirmed freshness, weekend and suspicious-gap session alignment, conflicting provider duplicates and replay idempotency.
 
 Additional regressions verify the closed typed AI tool registry, market breadth/report
 snapshot idempotence, leased EOD ownership, exponential retry scheduling, portfolio
@@ -60,5 +68,6 @@ This proves connectivity at that moment only. It does not establish market-data 
 - Live financial statements: no provider credential or redistribution agreement supplied; the tested path is authorized CSV only.
 - VPS portfolio data: no supported official integration supplied.
 - Docker Compose: Docker engine unavailable.
+- Local PostgreSQL benchmark: blocked because no service was listening on `localhost:5432`; the CI PostgreSQL service runs the isolated benchmark.
 - Production load, penetration testing, accessibility screen-reader audit and cross-browser matrix.
 - GitHub Actions and Docker Compose runtime were not executed locally because Docker/network infrastructure is unavailable here. The workflow now enforces PostgreSQL migrations and dependency audits on every pull request and push to `main`.

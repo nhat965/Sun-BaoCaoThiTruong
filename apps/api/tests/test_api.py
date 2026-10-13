@@ -36,6 +36,21 @@ def test_health_and_hpg_flow():
         quality_payload = quality.json()
         assert quality_payload["market_data_mode"] == "fixture"
         assert quality_payload["price_observations_count"] >= 30
+        assert quality_payload["price_sessions_count"] >= 1
+        assert quality_payload["price_sources"]
+        assert quality_payload["latest_price_freshness"] in {
+            "fresh",
+            "stale",
+            "delayed",
+            "historical",
+            "fixture",
+            "unconfirmed",
+            "unknown",
+        }
+        assert quality_payload["latest_price_freshness_basis"]
+        assert quality_payload["latest_price_session_status"]
+        assert quality_payload["price_coverage_by_session"]
+        assert quality_payload["price_coverage_by_exchange"]
         assert quality_payload["exchange_distribution"]["HOSE"] >= 1
         assert quality_payload["symbols_with_price_history"] >= 1
         assert quality_payload["price_coverage_percent"] > 0

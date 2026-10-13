@@ -6,8 +6,8 @@
 
 | Nguồn | Trạng thái | Ghi chú |
 |---|---|---|
-| Yahoo Finance chart API | Live, không chính thức | Không cần khóa; khả dụng phụ thuộc điều khoản/độ ổn định upstream. Mã HOSE dùng hậu tố `.VN`. |
-| Configurable RSS feeds | Live metadata | Chỉ dùng metadata, URL và tiêu đề; không sao chép toàn văn. Mặc định VnExpress, nguồn khác cấu hình qua `NEWS_FEEDS`. |
+| Yahoo Finance chart API | Development connector, delayed | Không cần khóa; có thể truy xuất OHLCV khi upstream đáp ứng, nhưng chưa xác minh quyền phân phối thương mại và không phải realtime production. Mã HOSE dùng hậu tố `.VN`. |
+| Configurable RSS feeds | Configured metadata, unverified | Chỉ dùng metadata, URL và tiêu đề; không sao chép toàn văn. Mặc định VnExpress, nguồn khác cấu hình qua `NEWS_FEEDS`; chưa tính là live nếu chưa có lần truy xuất thành công được ghi nhận. |
 | FireAnt | Theo dõi trạng thái; bị chặn khi thiếu token | Chỉ gọi `/monitoring/status` khi có token. Chưa tuyên bố dữ liệu nào là live khi chưa xác minh scope/entitlement. |
 | SSI FastConnect | BLOCKED | Tài liệu chính thức đã khảo sát; cần tài khoản, API key/secret và lần kiểm thử được cấp quyền. |
 | FiinGroup Datafeed | BLOCKED | Có phạm vi market/company/BCTC phù hợp; cần hợp đồng, credential và quyền phân phối. |
@@ -169,6 +169,8 @@ Nếu upstream không truy cập được, API trả lỗi `503` có cấu trúc
 
 ```bash
 cd apps/api && pytest
+cd apps/api && python scripts/benchmark_market_analytics.py
+cd apps/api && python scripts/benchmark_market_analytics_postgres.py --database-url "$BENCHMARK_DATABASE_URL"
 cd apps/web && npm run lint && npm run build
 ```
 
@@ -179,14 +181,14 @@ PostgreSQL 16 và chặn dependency production có lỗ hổng mức `high` tr�
 
 - Yahoo Finance không phải nguồn dữ liệu được cấp phép riêng cho sản phẩm này; cần thay bằng feed có hợp đồng trước khi phân phối thương mại.
 - Registry kèm theo chỉ là bootstrap 13 mã, được ghi nguồn rõ ràng; độ phủ đầy đủ cần file CSV được phép hoặc connector master-data có hợp đồng.
-- Trang chất lượng dữ liệu hiển thị độ phủ registry, số quan sát giá, mốc thị trường, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
+- Trang chất lượng dữ liệu hiển thị độ phủ theo market session/exchange, số mã có giá và actual trading value, mốc thị trường, freshness evidence, lịch sử thành công/thất bại của connector và các nguồn mới chỉ cấu hình/chưa xác minh.
 - Pipeline BCTC, công thức nền tảng và DCF theo giả định người dùng đã có; chưa có credential provider tài chính live, peer set hoặc dải định giá lịch sử.
 - Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, live social feed hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.
 - Jobs EOD, watchlist, alert-rule và daily snapshot đã có lease/idempotency/retry; cần worker/scheduler production để chạy định kỳ.
 - PDF dùng font hệ thống và có thể bỏ dấu khi môi trường thiếu font Unicode tương thích.
 
-Xem [implementation status](docs/IMPLEMENTATION_STATUS.md), [test report](docs/testing/TEST_REPORT.md), [architecture](docs/architecture/ARCHITECTURE.md), và [data sources](docs/integrations/DATA_SOURCES.md).
+Xem [implementation status](docs/IMPLEMENTATION_STATUS.md), [test report](docs/testing/TEST_REPORT.md), [production-readiness audit](docs/testing/PRODUCTION_READINESS_AUDIT.md), [architecture](docs/architecture/ARCHITECTURE.md), và [data sources](docs/integrations/DATA_SOURCES.md).
 
 
 ## Đồng bộ BCTC tự động từ nguồn HTTPS CSV được cấp quyền
