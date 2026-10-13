@@ -51,3 +51,8 @@ Statuses are evidence-based: `COMPLETE` means implemented and locally verified, 
 - Added evidence-first risk signals and conditional positive/base/negative scenarios.
 - Added persisted, idempotent snapshots and `/api/v1/market/risks` plus `/api/v1/market/scenarios`.
 - No uncalibrated probabilities or price targets; data limitations are explicit.
+
+## PR-F — Market Reports & Acceptance
+
+- Daily reports now consume breadth, regime, liquidity, sectors, risk signals, and scenarios from backend engines.
+- Report sections include provenance, as-of/status evidence, and explicit limitations; snapshots remain idempotent.
