@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
-
 from sqlalchemy import func, select
 
 from app.config import Settings
