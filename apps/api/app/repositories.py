@@ -982,6 +982,9 @@ class FinancialRepository:
             previous_period_revenue=sequential_values.get("revenue"),
             ttm_revenue=ttm("revenue"),
             net_income=current_values.get("net_income"),
+            net_income_attributable_to_parent=current_values.get(
+                "net_income_attributable_to_parent"
+            ),
             prior_net_income=previous_values.get("net_income"),
             previous_period_net_income=sequential_values.get("net_income"),
             ttm_net_income=ttm("net_income"),
@@ -995,6 +998,7 @@ class FinancialRepository:
             cash_and_equivalents=current_values.get("cash_and_equivalents"),
             prior_cash_and_equivalents=previous_values.get("cash_and_equivalents"),
             current_assets=current_values.get("current_assets"),
+            inventory=current_values.get("inventory"),
             current_liabilities=current_values.get("current_liabilities"),
             operating_income=current_values.get("operating_income"),
             profit_before_tax=current_values.get("profit_before_tax"),
@@ -1006,6 +1010,7 @@ class FinancialRepository:
             capital_expenditure=current_values.get("capital_expenditure"),
             ttm_capital_expenditure=ttm("capital_expenditure"),
             shares_outstanding=current_values.get("shares_outstanding"),
+            diluted_shares_outstanding=current_values.get("weighted_average_shares"),
             market_price=float(with_price) if with_price is not None else None,
             enterprise_value=current_values.get("enterprise_value"),
             ebitda=current_values.get("ebitda"),
@@ -1038,6 +1043,10 @@ class FinancialRepository:
                 metric.source_name = current.source_name
                 metric.calculated_at = calculated_at
         self.session.commit()
+        metric_metadata = {
+            code: metadata.model_copy(update={"as_of_date": current.period_end})
+            for code, metadata in result.metric_metadata.items()
+        }
         return result.model_copy(
             update={
                 "symbol": security.symbol,
@@ -1046,6 +1055,7 @@ class FinancialRepository:
                 "source_name": current.source_name,
                 "statement_scope": current.statement_scope,
                 "statement_status": current.statement_status,
+                "metric_metadata": metric_metadata,
             }
         )
 
@@ -1142,6 +1152,9 @@ class FinancialRepository:
                     previous_period_revenue=sequential_values.get("revenue"),
                     ttm_revenue=ttm("revenue"),
                     net_income=current_values.get("net_income"),
+                    net_income_attributable_to_parent=current_values.get(
+                        "net_income_attributable_to_parent"
+                    ),
                     prior_net_income=previous_values.get("net_income"),
                     previous_period_net_income=sequential_values.get("net_income"),
                     ttm_net_income=ttm("net_income"),
@@ -1155,6 +1168,7 @@ class FinancialRepository:
                     cash_and_equivalents=current_values.get("cash_and_equivalents"),
                     prior_cash_and_equivalents=previous_values.get("cash_and_equivalents"),
                     current_assets=current_values.get("current_assets"),
+                    inventory=current_values.get("inventory"),
                     current_liabilities=current_values.get("current_liabilities"),
                     operating_income=current_values.get("operating_income"),
                     profit_before_tax=current_values.get("profit_before_tax"),
@@ -1166,10 +1180,15 @@ class FinancialRepository:
                     capital_expenditure=current_values.get("capital_expenditure"),
                     ttm_capital_expenditure=ttm("capital_expenditure"),
                     shares_outstanding=current_values.get("shares_outstanding"),
+                    diluted_shares_outstanding=current_values.get("weighted_average_shares"),
                     enterprise_value=current_values.get("enterprise_value"),
                     ebitda=current_values.get("ebitda"),
                 )
             )
+            metric_metadata = {
+                code: metadata.model_copy(update={"as_of_date": period.period_end})
+                for code, metadata in calculated.metric_metadata.items()
+            }
             results.append(
                 calculated.model_copy(
                     update={
@@ -1179,6 +1198,7 @@ class FinancialRepository:
                         "source_name": period.source_name,
                         "statement_scope": period.statement_scope,
                         "statement_status": period.statement_status,
+                        "metric_metadata": metric_metadata,
                     }
                 )
             )

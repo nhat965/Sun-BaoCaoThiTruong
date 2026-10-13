@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
-from app.schemas import FinancialInputs, FinancialMetricResult
+from app.analytics.formula_registry import FORMULA_VERSION, get_formula_definition
+from app.schemas import FinancialInputs, FinancialMetricMetadata, FinancialMetricResult
 
 
 def safe_divide(numerator: float | None, denominator: float | None) -> float | None:
@@ -18,8 +19,33 @@ def growth(current: float | None, previous: float | None) -> float | None:
     return None if value is None else value * 100
 
 
+def normalized_capex(capital_expenditure: float | None) -> float | None:
+    """Return CAPEX as a positive investment amount regardless of source sign."""
+
+    return None if capital_expenditure is None else abs(capital_expenditure)
+
+
+def free_cash_flow(operating_cash_flow: float | None, capital_expenditure: float | None) -> float | None:
+    capex = normalized_capex(capital_expenditure)
+    return (
+        None
+        if operating_cash_flow is None or capex is None
+        else operating_cash_flow - capex
+    )
+
+
 def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResult:
-    earnings_per_share = safe_divide(inputs.net_income, inputs.shares_outstanding)
+    earnings_numerator = (
+        inputs.net_income_attributable_to_parent
+        if inputs.net_income_attributable_to_parent is not None
+        else inputs.net_income
+    )
+    earnings_shares = (
+        inputs.diluted_shares_outstanding
+        if inputs.diluted_shares_outstanding is not None
+        else inputs.shares_outstanding
+    )
+    earnings_per_share = safe_divide(earnings_numerator, earnings_shares)
     book_value_per_share = safe_divide(inputs.total_equity, inputs.shares_outstanding)
     average_equity = (
         (inputs.total_equity + inputs.prior_total_equity) / 2
@@ -31,16 +57,11 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         if inputs.total_assets is not None and inputs.prior_total_assets is not None
         else inputs.total_assets
     )
-    free_cash_flow = (
-        None
-        if inputs.operating_cash_flow is None or inputs.capital_expenditure is None
-        else inputs.operating_cash_flow - inputs.capital_expenditure
+    free_cash_flow_value = free_cash_flow(
+        inputs.operating_cash_flow, inputs.capital_expenditure
     )
-    ttm_free_cash_flow = (
-        None
-        if inputs.ttm_operating_cash_flow is None
-        or inputs.ttm_capital_expenditure is None
-        else inputs.ttm_operating_cash_flow - inputs.ttm_capital_expenditure
+    ttm_free_cash_flow = free_cash_flow(
+        inputs.ttm_operating_cash_flow, inputs.ttm_capital_expenditure
     )
     annualization_factor = 12 / inputs.period_months if inputs.period_months else None
     warnings = []
@@ -104,6 +125,23 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         warnings.append(
             "Tăng trưởng YoY/QoQ được để trống khi kỳ gốc không dương để tránh tỷ lệ gây hiểu lầm."
         )
+    quick_ratio = (
+        safe_divide(
+            inputs.current_assets - inputs.inventory,
+            inputs.current_liabilities,
+        )
+        if inputs.current_assets is not None
+        and inputs.inventory is not None
+        and inputs.current_liabilities is not None
+        and inputs.current_liabilities > 0
+        and not is_financial
+        else None
+    )
+    net_debt = (
+        inputs.total_debt - inputs.cash_and_equivalents
+        if inputs.total_debt is not None and inputs.cash_and_equivalents is not None
+        else None
+    )
     metrics = {
         "revenue_growth_percent": growth(inputs.revenue, inputs.prior_revenue),
         "net_income_growth_percent": growth(inputs.net_income, inputs.prior_net_income),
@@ -137,10 +175,10 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         else value * 100,
         "roic_percent": None if roic is None else roic * 100,
         "gross_margin_percent": None
-        if (value := safe_divide(inputs.gross_profit, inputs.revenue)) is None
+        if is_financial or (value := safe_divide(inputs.gross_profit, inputs.revenue)) is None
         else value * 100,
         "operating_margin_percent": None
-        if (value := safe_divide(inputs.operating_income, inputs.revenue)) is None
+        if is_financial or (value := safe_divide(inputs.operating_income, inputs.revenue)) is None
         else value * 100,
         "net_margin_percent": None
         if (value := safe_divide(inputs.net_income, inputs.revenue)) is None
@@ -154,9 +192,11 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         or inputs.current_liabilities <= 0
         else safe_divide(inputs.current_assets, inputs.current_liabilities),
         "interest_coverage": None
-        if inputs.interest_expense is None or inputs.interest_expense <= 0
+        if is_financial
+        or inputs.interest_expense is None
+        or inputs.interest_expense <= 0
         else safe_divide(inputs.operating_income, inputs.interest_expense),
-        "free_cash_flow": free_cash_flow,
+        "free_cash_flow": free_cash_flow_value,
         "ttm_free_cash_flow": ttm_free_cash_flow,
         "eps": earnings_per_share,
         "book_value_per_share": book_value_per_share,
@@ -168,6 +208,24 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         ),
         "ev_to_ebitda": safe_divide(inputs.enterprise_value, inputs.ebitda),
         "operating_cash_flow": inputs.operating_cash_flow,
+        "quick_ratio": quick_ratio,
+        "net_debt": net_debt,
+        "cash_to_debt": safe_divide(inputs.cash_and_equivalents, inputs.total_debt),
+        "debt_to_ebitda": safe_divide(inputs.total_debt, inputs.ebitda),
+        "operating_cash_flow_to_net_income": safe_divide(
+            inputs.operating_cash_flow, inputs.net_income
+        ),
+        "cash_conversion_percent": (
+            safe_divide(inputs.operating_cash_flow, inputs.net_income) * 100
+            if safe_divide(inputs.operating_cash_flow, inputs.net_income) is not None
+            else None
+        ),
+        "capex_intensity_percent": (
+            safe_divide(normalized_capex(inputs.capital_expenditure), inputs.revenue) * 100
+            if safe_divide(normalized_capex(inputs.capital_expenditure), inputs.revenue)
+            is not None
+            else None
+        ),
     }
     rounded = {key: None if value is None else round(value, 6) for key, value in metrics.items()}
     if inputs.net_income is not None and inputs.net_income <= 0:
@@ -184,9 +242,50 @@ def calculate_financial_metrics(inputs: FinancialInputs) -> FinancialMetricResul
         warnings.append(
             f"{missing}/{len(rounded)} chỉ tiêu không tính được do thiếu hoặc mẫu số bằng 0."
         )
+    metadata = {}
+    input_values = inputs.model_dump()
+    for metric_code, value in rounded.items():
+        definition = get_formula_definition(metric_code)
+        if definition is None:
+            required_inputs = []
+            applicable_types = ["non_financial", "bank", "securities", "insurance"]
+            period_policy = "period"
+            unit = "scalar"
+            description = "Derived metric."
+            limitation = "See metric inputs and warnings."
+        else:
+            required_inputs = list(definition.required_inputs)
+            applicable_types = list(definition.applicable_company_types)
+            period_policy = definition.period_policy
+            unit = definition.unit
+            description = definition.formula_description
+            limitation = definition.limitations
+        missing_inputs = [
+            name for name in required_inputs if input_values.get(name) is None
+        ]
+        input_status = (
+            "not_applicable"
+            if inputs.entity_type not in applicable_types
+            else "incomplete"
+            if missing_inputs
+            else "complete"
+        )
+        metadata[metric_code] = FinancialMetricMetadata(
+            metric_code=metric_code,
+            value=value,
+            unit=unit,
+            formula_version=FORMULA_VERSION,
+            required_inputs=required_inputs,
+            missing_inputs=missing_inputs,
+            input_status=input_status,
+            applicable_company_types=applicable_types,
+            period_policy=period_policy,
+            limitations=f"{description}; {limitation}",
+        )
     return FinancialMetricResult(
         metrics=rounded,
         calculated_at=datetime.now(UTC),
-        formula_version="fundamental-v2",
+        formula_version=FORMULA_VERSION,
         warnings=warnings,
+        metric_metadata=metadata,
     )

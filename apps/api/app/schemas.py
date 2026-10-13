@@ -257,6 +257,7 @@ class FinancialInputs(BaseModel):
     previous_period_revenue: float | None = None
     ttm_revenue: float | None = None
     net_income: float | None = None
+    net_income_attributable_to_parent: float | None = None
     prior_net_income: float | None = None
     previous_period_net_income: float | None = None
     ttm_net_income: float | None = None
@@ -270,6 +271,7 @@ class FinancialInputs(BaseModel):
     cash_and_equivalents: float | None = None
     prior_cash_and_equivalents: float | None = None
     current_assets: float | None = None
+    inventory: float | None = None
     current_liabilities: float | None = None
     operating_income: float | None = None
     profit_before_tax: float | None = None
@@ -281,9 +283,24 @@ class FinancialInputs(BaseModel):
     capital_expenditure: float | None = None
     ttm_capital_expenditure: float | None = None
     shares_outstanding: float | None = None
+    diluted_shares_outstanding: float | None = None
     market_price: float | None = None
     enterprise_value: float | None = None
     ebitda: float | None = None
+
+
+class FinancialMetricMetadata(BaseModel):
+    metric_code: str
+    value: float | None
+    unit: str
+    formula_version: str
+    required_inputs: list[str] = Field(default_factory=list)
+    missing_inputs: list[str] = Field(default_factory=list)
+    input_status: Literal["complete", "incomplete", "not_applicable"]
+    applicable_company_types: list[str] = Field(default_factory=list)
+    period_policy: str
+    limitations: str
+    as_of_date: datetime | None = None
 
 
 class FinancialMetricResult(BaseModel):
@@ -297,6 +314,7 @@ class FinancialMetricResult(BaseModel):
     source_name: str | None = None
     statement_scope: Literal["consolidated", "separate"] | None = None
     statement_status: Literal["original", "amended"] | None = None
+    metric_metadata: dict[str, FinancialMetricMetadata] = Field(default_factory=dict)
 
 
 class FinancialTrendResponse(BaseModel):
