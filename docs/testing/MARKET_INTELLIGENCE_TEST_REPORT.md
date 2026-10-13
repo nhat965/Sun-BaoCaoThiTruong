@@ -13,6 +13,8 @@ later PRs.
   handling, history-depth denominators, index import provenance and replay idempotency.
 - Ruff passes for the backend source and tests.
 - Frontend lint and production build pass on the unchanged frontend surface.
+- GitHub Actions CI run `#33` passed: 84 backend tests, PostgreSQL migration verification,
+  Python dependency audit, frontend lint, production build and dependency audit.
 - Pytest and Alembic execution are currently blocked on this host because the checked-in
   `.venv` points to `C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe`,
   which is no longer installed. The existing Codex API process was still verified through
