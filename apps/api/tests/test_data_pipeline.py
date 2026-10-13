@@ -160,6 +160,8 @@ def test_automatic_financial_sync_records_blocked_state_and_quality_error():
 def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
     import httpx
 
+    from app.auth import admin_rate_limiter
+
     csv_data = (
         "period_end,period_type,fiscal_year,statement_type,item_code,value,unit,"
         "verification_status,statement_scope,source_url\n"
@@ -207,6 +209,7 @@ def test_licensed_https_financial_sync_imports_and_is_idempotent(monkeypatch):
             )
     finally:
         app.dependency_overrides.clear()
+        admin_rate_limiter.reset()
 
 
 def test_financial_sync_requires_rights_and_safe_url(monkeypatch):
@@ -235,3 +238,4 @@ def test_financial_sync_requires_rights_and_safe_url(monkeypatch):
                 assert result.json()["status"] == "BLOCKED"
         finally:
             app.dependency_overrides.clear()
+        admin_rate_limiter.reset()
