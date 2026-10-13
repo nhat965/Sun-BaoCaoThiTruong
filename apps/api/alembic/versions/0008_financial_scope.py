@@ -34,7 +34,7 @@ def upgrade():
         "uq_financial_periods_security_id_period_end_period_type"
     )
     with op.batch_alter_table(
-        "financial_periods", recreate="always", naming_convention=NAMING_CONVENTION
+        "financial_periods", recreate="auto", naming_convention=NAMING_CONVENTION
     ) as batch:
         batch.add_column(
             sa.Column(
@@ -61,7 +61,7 @@ def upgrade():
 
 def downgrade():
     with op.batch_alter_table(
-        "financial_periods", recreate="always", naming_convention=NAMING_CONVENTION
+        "financial_periods", recreate="auto", naming_convention=NAMING_CONVENTION
     ) as batch:
         batch.drop_constraint("uq_financial_period_scope", type_="unique")
         batch.create_unique_constraint(
