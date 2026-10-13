@@ -786,6 +786,51 @@ class LiquidityResponse(BaseModel):
     formula_version: str = "liquidity-intelligence-v1"
 
 
+class MarketRiskSignal(BaseModel):
+    signal_id: str
+    signal_type: str
+    severity: Literal["info", "watch", "warning"]
+    title: str
+    trigger: dict[str, int | float | str | bool | None] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MarketRisksResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    signals: list[MarketRiskSignal] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-risk-v1"
+
+
+class MarketScenario(BaseModel):
+    scenario_id: Literal["positive", "base", "negative"]
+    label: str
+    horizon: Literal["1-5 sessions", "1-4 weeks"]
+    assumptions: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    invalidation_conditions: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    watch: list[str] = Field(default_factory=list)
+    status: Literal["conditional", "blocked"] = "conditional"
+
+
+class MarketScenariosResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    scenarios: list[MarketScenario] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-scenario-v1"
+
+
 class MarketOverview(BaseModel):
     status: Literal["available", "partial", "unavailable"]
     as_of: datetime | None = None

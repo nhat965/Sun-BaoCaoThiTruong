@@ -46,3 +46,8 @@
 | M8 Release readiness | PARTIAL | Local lint, 55 tests, frontend build and migration cycle through `0013` pass. PostgreSQL CI, dependency audit and health-gated Compose are configured; Docker smoke cannot run on this host. |
 
 Statuses are evidence-based: `COMPLETE` means implemented and locally verified, `PARTIAL` means a useful vertical slice exists with an explicit gap, and `BLOCKED` requires credentials, rights or infrastructure not provided here.
+## PR-D — Risk & Scenario Engine
+
+- Added evidence-first risk signals and conditional positive/base/negative scenarios.
+- Added persisted, idempotent snapshots and `/api/v1/market/risks` plus `/api/v1/market/scenarios`.
+- No uncalibrated probabilities or price targets; data limitations are explicit.
