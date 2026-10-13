@@ -1,5 +1,16 @@
 # Data sources
 
+## Khảo sát nguồn cho Task 02
+
+| Tên nguồn | URL tài liệu | Dữ liệu hỗ trợ | Xác thực | Cấp quyền | Điều khoản sử dụng | Khả năng kết nối thực tế | Kết quả kiểm tra | Chi phí / giới hạn đã xác minh |
+|---|---|---|---|---|---|---|---|---|
+| Yahoo Finance chart | [Product API terms](https://legal.yahoo.com/us/en/yahoo/terms/product-atos/apiforydn/index.html) | OHLCV ngày | Không có credential trong connector hiện tại | Không chứng minh quyền phân phối thương mại | Điều khoản Yahoo áp dụng; chỉ dùng connector phát triển | Đã triển khai, thay thế được | HPG và FPT gọi thật thành công ngày 2026-10-13; 120 dòng/mã, sync kế tiếp không tạo dòng trùng | Không có quota/quyền production được xác minh |
+| FireAnt REST API v1 | [OpenAPI chính thức](https://api.fireant.vn/) | Scope được tài liệu hóa cho symbols, companies, finance và nội dung khác | OAuth2 Bearer với scope | Tài khoản, scope và entitlement | Cần thỏa thuận dữ liệu/quyền phân phối phù hợp | Capability được khai báo nhưng chưa bật | `BLOCKED`: không có token và chưa có lần gọi dữ liệu được cấp quyền | Giá/quota công khai chưa xác minh |
+| SSI FastConnect API v3 | [Overview](https://developers.ssi.com.vn/docs/getting-started/overview), [registration](https://developers.ssi.com.vn/docs/getting-started/registration), [terms/environments](https://developers.ssi.com.vn/docs/getting-started/terms-and-environments) | Securities metadata, OHLCV ngày/intraday, market indices | API key + secret đổi Bearer JWT | Tài khoản SSI, đăng ký và được duyệt FastConnect | Điều khoản dịch vụ SSI và quyền phân phối áp dụng | Interface phù hợp nhưng connector chưa được bật | `BLOCKED`: không có key/secret, không đoán endpoint hoặc gọi ẩn | Rate-limit theo key/header; lịch sử ngày từ niêm yết, intraday một năm; giá dịch vụ chưa xác minh |
+| FiinGroup API Datafeed | [Trang sản phẩm](https://datafeed.fiingroup.vn/), [API doanh nghiệp](https://datafeed.fiingroup.vn/api-doanh-nghiep) | Metadata, market data, sự kiện, BCTC hợp nhất/riêng và cash flow | Credential thương mại | Hợp đồng, entitlement, quyền phân phối | Theo hợp đồng dữ liệu FiinGroup | Schema/phạm vi phù hợp, chưa có credential | `BLOCKED`: không có quyền nên chưa gọi API thật | Liên hệ nhà cung cấp; giá công khai chưa xác minh |
+| HNX/HOSE và công bố doanh nghiệp | [Danh sách niêm yết HNX](https://www.hnx.vn/co-phieu-etfs/chung-khoan-ny.html) | Danh sách/công bố và tài liệu doanh nghiệp | Duyệt công khai hoặc workflow tổ chức phát hành | Chưa xác minh bulk API và quyền tự động phân phối | Điều khoản từng sở/nguồn công bố áp dụng | Chỉ nhận làm provenance cho file hợp pháp | `BLOCKED` cho tự động hóa; không scrape/API nội bộ | Chưa xác minh |
+| File do người dùng cấp quyền | Hướng dẫn import trong README | Securities CSV/XLSX, corporate actions CSV, BCTC CSV | Bearer admin của ứng dụng | Người vận hành xác nhận quyền sử dụng file | Quyền của nguồn gốc file vẫn áp dụng | Đã triển khai và kiểm thử | `AVAILABLE`: validate, normalize, upsert, audit sync | Không phí provider; giới hạn request/rate của ứng dụng |
+
 ## Yahoo Finance chart
 
 Implemented as a replaceable, unauthenticated development connector. It resolves provider IDs from the securities registry, falling back to `.VN`, and records source URL, retrieval time, market time, freshness, currency, validation state and adjustment policy. It is not represented as a licensed commercial feed. Production must configure a contractual provider behind the same interface.
@@ -11,6 +22,14 @@ Implemented for public RSS metadata. The application stores/returns headline, pu
 ## FireAnt
 
 The official [FireAnt API documentation](https://api.fireant.vn/) advertises OAuth scopes including `companies-read`, `finance-read` and `posts-read`. The isolated connector can check the documented `/monitoring/status` endpoint when `FIREANT_ACCESS_TOKEN` is configured. Without a token it reports `unavailable` with a `BLOCKED` message and performs no request. A health response alone does not prove any data scope; market-data calls remain disabled until credentials, scopes, entitlements and redistribution rights are verified.
+
+## SSI FastConnect and FiinGroup
+
+Both sources are represented by capability metadata only. The application will not probe
+undocumented endpoints or advertise them as enabled merely because environment variables
+exist. SSI requires an authenticated integration test after account approval. FiinGroup
+requires confirmation of the contracted product scope, entitlement and redistribution
+rights. Until those checks pass, `enabled_capabilities` remains empty.
 
 ## Securities master
 
@@ -40,7 +59,7 @@ V4 source rule: a feed is operational only after a real request succeeds. `NEWS_
 
 ## Data-quality diagnostics
 
-`GET /api/v1/data-quality` reports securities coverage, stored price-observation coverage, latest market/retrieval timestamps, and connector health. Migration `0007` retains each connector's latest successful and failed check independently, plus consecutive failures. The web dashboard presents `fixture`, `configured`, `available` and `unavailable` distinctly; configured sources without a verified successful request are not described as live.
+`GET /api/v1/data-quality` reports securities coverage, price and financial-statement coverage, stored observations, latest market/retrieval timestamps, sync errors, failed symbols and connector health. Migrations `0007` and `0013` retain connector health plus each ingestion run/error. The web dashboard presents `fixture`, `configured`, `available` and `unavailable` distinctly; configured sources without a verified successful request are not described as live.
 
 ## AI evidence boundary
 

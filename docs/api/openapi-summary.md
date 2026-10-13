@@ -3,6 +3,7 @@
 - `GET /api/v1/health` — liveness and data mode.
 - `GET /api/v1/sources` — capability and availability declarations.
 - `GET /api/v1/sources/status` — active connector status; FireAnt stays blocked without a token.
+- `GET /api/v1/providers` — documented versus actually enabled capabilities, access requirements and last successful check.
 - `GET /api/v1/stocks/search?q=HPG` — canonical security matches.
 - `GET /api/v1/securities` — database-filtered securities explorer with pagination, facets, sorting and nullable latest market/fundamental fields.
 - `GET /api/v1/stocks/{symbol}` — security metadata.
@@ -14,6 +15,10 @@
 - `POST /api/v1/securities/import` — authorized CSV import into the securities master.
 - `POST /api/v1/securities/import/xlsx` — authorized XLSX import through the same validation/upsert path.
 - `POST /api/v1/stocks/{symbol}/financials/import` — admin-only validated financial-statement CSV import.
+- `GET /api/v1/stocks/{symbol}/financial-statements` — normalized periods/items with source, scope, unit, verification and automatic-sync state.
+- `POST /api/v1/sync/prices/{symbol}` — admin-only initial/incremental OHLCV ingestion with a persisted run record.
+- `POST /api/v1/sync/financials/{symbol}` — admin-only financial sync request; records `BLOCKED` when no entitled provider is enabled.
+- `GET /api/v1/sync/runs` — admin-only sync audit log with provider/capability/status filters.
 - `GET /api/v1/stocks/{symbol}/fundamentals` — ratios calculated from stored statements and latest stored price.
 - `POST /api/v1/fundamentals/calculate` — deterministic ratios from supplied financial inputs.
 - `POST /api/v1/fundamentals/valuation` — relative P/E + P/B scenarios using explicit labeled assumptions.

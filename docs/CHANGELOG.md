@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0 — Task 02 real data pipeline
+
+- Added explicit provider capability declarations for metadata, OHLCV, indices,
+  corporate actions and all three financial statements.
+- Added initial/incremental price sync with persisted runs/errors, cursors, provenance,
+  idempotent upserts and a reproducible HPG/FPT live verification script.
+- Added auditable financial unit normalization, raw-value retention and protection of
+  verified statements from unverified overwrites in migration `0013`.
+- Added normalized statement read API, BCTC coverage/error diagnostics and a dashboard
+  ledger with explicit missing and `BLOCKED` states.
+- Documented FireAnt, SSI FastConnect, FiinGroup, exchange pages and authorized-file
+  access without guessing endpoints or enabling unverified capabilities.
+
 ## 0.5.3 — Securities Explorer
 
 - Added a database-paginated securities catalog with unaccented search, exchange,

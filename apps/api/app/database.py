@@ -164,6 +164,8 @@ class FinancialStatementItemRecord(Base):
     item_code: Mapped[str] = mapped_column(String(64), index=True)
     value: Mapped[Decimal] = mapped_column(Numeric(28, 6))
     unit: Mapped[str] = mapped_column(String(32), default="VND")
+    raw_value: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
+    raw_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_name: Mapped[str] = mapped_column(String(128))
     source_url: Mapped[str | None] = mapped_column(String(1024))
     verification_status: Mapped[str] = mapped_column(String(24), default="unverified")
@@ -375,6 +377,38 @@ class PortfolioTransactionRecord(Base):
     external_id: Mapped[str] = mapped_column(String(128))
     source_name: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DataSyncRunRecord(Base):
+    __tablename__ = "data_sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(128), index=True)
+    capability: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), index=True)
+    sync_mode: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cursor_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cursor_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    inserted_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(String(1024))
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class DataSyncErrorRecord(Base):
+    __tablename__ = "data_sync_errors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("data_sync_runs.id"), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), index=True)
+    error_code: Mapped[str] = mapped_column(String(64), index=True)
+    message: Mapped[str] = mapped_column(String(1024))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 settings = get_settings()

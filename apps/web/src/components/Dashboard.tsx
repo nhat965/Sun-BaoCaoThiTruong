@@ -1,13 +1,24 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResult, FinancialTrendResponse, ValuationResult } from "@/lib/types";
+import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResult, FinancialStatementsResponse, FinancialTrendResponse, ValuationResult } from "@/lib/types";
 import { PriceChart } from "./PriceChart";
 import { SecuritiesExplorer } from "./SecuritiesExplorer";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 const money = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
+const statementItems = [
+  ["revenue", "Doanh thu"],
+  ["gross_profit", "Lợi nhuận gộp"],
+  ["net_income", "Lợi nhuận sau thuế"],
+  ["total_assets", "Tổng tài sản"],
+  ["total_equity", "Vốn chủ sở hữu"],
+  ["total_liabilities", "Nợ phải trả"],
+  ["operating_cash_flow", "Lưu chuyển tiền HĐKD"],
+  ["investing_cash_flow", "Dòng tiền đầu tư"],
+  ["financing_cash_flow", "Dòng tiền tài chính"],
+] as const;
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Không có";
@@ -18,6 +29,7 @@ export function Dashboard() {
   const [data, setData] = useState<Analysis | null>(null);
   const [fundamentals, setFundamentals] = useState<FinancialMetricResult | null>(null);
   const [financialTrend, setFinancialTrend] = useState<FinancialTrendResponse | null>(null);
+  const [financialStatements, setFinancialStatements] = useState<FinancialStatementsResponse | null>(null);
   const [dcfResult, setDcfResult] = useState<ValuationResult | null>(null);
   const [dcfError, setDcfError] = useState("");
   const [dcfCashFlows, setDcfCashFlows] = useState("");
@@ -53,6 +65,8 @@ export function Dashboard() {
   }
 
   async function fetchFundamentals(nextSymbol: string) {
+    const statements = await fetch(`${API}/stocks/${encodeURIComponent(nextSymbol)}/financial-statements?limit=8`, { cache: "no-store" });
+    setFinancialStatements(statements.ok ? await statements.json() : null);
     const response = await fetch(`${API}/stocks/${encodeURIComponent(nextSymbol)}/fundamentals`, { cache: "no-store" });
     if (!response.ok) {
       setFundamentals(null);
@@ -76,6 +90,7 @@ export function Dashboard() {
       setData(null);
       setFundamentals(null);
       setFinancialTrend(null);
+      setFinancialStatements(null);
       setError(reason instanceof Error ? reason.message : "Không thể tải dữ liệu.");
     } finally {
       setLoading(false);
@@ -210,6 +225,11 @@ export function Dashboard() {
       <section className="fundamental-section">
         <div className="section-head"><div><p className="eyebrow">Phân tích cơ bản</p><h2>BCTC đã lưu trong hệ thống</h2></div><p>{fundamentals ? `Kỳ ${fundamentals.period_type ?? "không xác định"} · ${fundamentals.statement_scope === "separate" ? "riêng lẻ" : "hợp nhất"} · ${fundamentals.statement_status === "amended" ? "đã điều chỉnh" : "bản gốc"} · ${formatDate(fundamentals.period_end)} · nguồn ${fundamentals.source_name ?? "không rõ"}` : "Chưa có BCTC hợp lệ được kết nối cho mã này."}</p></div>
         {fundamentals ? <><div className="metric-grid">{[["Doanh thu tăng trưởng", "revenue_growth_percent", "%"], ["Lợi nhuận tăng trưởng", "net_income_growth_percent", "%"], ["ROE", "roe_percent", "%"], ["ROA", "roa_percent", "%"], ["Biên ròng", "net_margin_percent", "%"], ["D/E", "debt_to_equity", "x"], ["Current ratio", "current_ratio", "x"], ["EPS", "eps", ""], ["P/E", "pe", "x"]].map(([label, key, suffix]) => <article key={key}><span>{label}</span><strong>{fundamentals.metrics[key] === null || fundamentals.metrics[key] === undefined ? "—" : `${decimal.format(fundamentals.metrics[key] as number)}${suffix}`}</strong></article>)}</div><ul className="metric-warnings">{fundamentals.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></> : <div className="empty">Hãy nạp CSV BCTC được cấp phép qua endpoint quản trị để bật phân tích theo quý/năm. Không suy đoán số liệu còn thiếu.</div>}
+        {financialStatements && <div className="statement-ledger">
+          <div className="statement-ledger-head"><div><h3>Sổ BCTC chuẩn hóa</h3><p>{financialStatements.periods.length ? `${financialStatements.periods.length} kỳ gần nhất · giá trị chuẩn hóa giữ kèm đơn vị gốc.` : "Chưa có kỳ báo cáo nào được nhập."}</p></div><span className={`pipeline-state ${financialStatements.automatic_sync_status}`}>{financialStatements.automatic_sync_status === "available" ? "TỰ ĐỘNG" : "BLOCKED"}</span></div>
+          {financialStatements.periods.length ? <div className="trend-scroll"><table><thead><tr><th>Chỉ tiêu</th>{financialStatements.periods.map((period) => <th key={`${period.period_end}-${period.statement_scope}`}>{period.period_type === "quarter" ? `Q${period.fiscal_quarter}/${period.fiscal_year}` : period.fiscal_year}<small>{period.statement_scope === "consolidated" ? "Hợp nhất" : "Riêng lẻ"}</small></th>)}</tr></thead><tbody>{statementItems.map(([code, label]) => <tr key={code}><td>{label}</td>{financialStatements.periods.map((period) => { const item = period.items.find((candidate) => candidate.item_code === code); return <td key={`${period.period_end}-${period.statement_scope}-${code}`}>{item ? <>{money.format(item.value)}<small>{item.unit} · {item.source_name}</small></> : <span className="missing-value">Chưa có dữ liệu</span>}</td>; })}</tr>)}</tbody></table></div> : <div className="empty">Chưa có BCTC được cấp phép. Có thể nhập file CSV hợp lệ qua API quản trị; hệ thống sẽ lưu kỳ, phạm vi, đơn vị, nguồn và trạng thái xác minh.</div>}
+          <p className="pipeline-message">{financialStatements.automatic_sync_message}</p>
+        </div>}
         {financialTrend && <div className="financial-trend"><h3>Xu hướng BCTC năm · hợp nhất</h3><div className="trend-scroll"><table><thead><tr><th>Kỳ</th><th>Tăng trưởng DT</th><th>Tăng trưởng LN</th><th>ROE</th><th>Biên ròng</th><th>OCF</th></tr></thead><tbody>{financialTrend.periods.map((period) => <tr key={period.period_end}><td>{period.period_end ? new Date(period.period_end).getFullYear() : "—"}{period.statement_status === "amended" ? " · điều chỉnh" : ""}</td>{["revenue_growth_percent", "net_income_growth_percent", "roe_percent", "net_margin_percent", "operating_cash_flow"].map((key) => <td key={key}>{period.metrics[key] === null || period.metrics[key] === undefined ? "—" : decimal.format(period.metrics[key] as number)}</td>)}</tr>)}</tbody></table></div>{financialTrend.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div>}
       </section>
 
@@ -240,10 +260,10 @@ export function Dashboard() {
       <section className="quality-section" id="sources">
         <div className="section-head"><div><h2>Chất lượng và độ phủ dữ liệu</h2></div><p>{quality ? `Ảnh chụp hệ thống lúc ${formatDate(quality.generated_at)}.` : "Không thể tải chẩn đoán nguồn trong lần truy cập này."}</p></div>
         {quality && <>
-          <dl className="coverage-strip"><div><dt>Mã đang hoạt động</dt><dd>{quality.active_securities_count} / {quality.securities_count}</dd></div><div><dt>Mã có lịch sử giá</dt><dd>{quality.symbols_with_price_history} · {decimal.format(quality.price_coverage_percent)}%</dd></div><div><dt>Quan sát giá đã lưu</dt><dd>{money.format(quality.price_observations_count)}</dd></div><div><dt>Mốc thị trường gần nhất</dt><dd>{formatDate(quality.last_market_timestamp)}</dd></div></dl>
+          <dl className="coverage-strip"><div><dt>Mã đang hoạt động</dt><dd>{quality.active_securities_count} / {quality.securities_count}</dd></div><div><dt>Mã có lịch sử giá</dt><dd>{quality.symbols_with_price_history} · {decimal.format(quality.price_coverage_percent)}%</dd></div><div><dt>Mã có BCTC</dt><dd>{quality.symbols_with_financial_statements} · {decimal.format(quality.financial_coverage_percent)}%</dd></div><div><dt>Lỗi đồng bộ đã ghi</dt><dd>{money.format(quality.sync_error_records)}</dd></div><div><dt>Quan sát giá đã lưu</dt><dd>{money.format(quality.price_observations_count)}</dd></div><div><dt>Mốc thị trường gần nhất</dt><dd>{formatDate(quality.last_market_timestamp)}</dd></div></dl>
           <div className="quality-breakdown">
             <section aria-labelledby="exchange-coverage-heading"><h3 id="exchange-coverage-heading">Độ phủ theo sàn</h3><dl>{Object.entries(quality.exchange_distribution).map(([exchange, count]) => <div key={exchange}><dt>{exchange}</dt><dd><strong>{count} mã</strong><span>Giá mới nhất {formatDate(quality.latest_market_timestamp_by_exchange[exchange] ?? null)}</span></dd></div>)}</dl></section>
-            <section aria-labelledby="price-alert-heading"><h3 id="price-alert-heading">Cảnh báo chuỗi giá</h3><dl>{Object.entries(quality.price_quality_alerts).map(([key, count]) => <div key={key}><dt>{key === "zero_volume" ? "Khối lượng bằng 0" : key === "price_jump_over_20_percent" ? "Biến động trên 20%" : key === "calendar_gap_over_4_days" ? "Khoảng lịch trên 4 ngày" : "Quan sát chưa xác minh"}</dt><dd>{money.format(count)}</dd></div>)}</dl>{quality.symbols_missing_price_history > 0 && <p><strong>{quality.symbols_missing_price_history} mã chưa có lịch sử giá.</strong>{quality.missing_price_symbols.length > 0 ? ` Mẫu: ${quality.missing_price_symbols.join(", ")}.` : ""}</p>}</section>
+            <section aria-labelledby="price-alert-heading"><h3 id="price-alert-heading">Cảnh báo chuỗi giá</h3><dl>{Object.entries(quality.price_quality_alerts).map(([key, count]) => <div key={key}><dt>{key === "zero_volume" ? "Khối lượng bằng 0" : key === "price_jump_over_20_percent" ? "Biến động trên 20%" : key === "calendar_gap_over_4_days" ? "Khoảng lịch trên 4 ngày" : "Quan sát chưa xác minh"}</dt><dd>{money.format(count)}</dd></div>)}</dl>{quality.symbols_missing_price_history > 0 && <p><strong>{quality.symbols_missing_price_history} mã chưa có lịch sử giá.</strong>{quality.missing_price_symbols.length > 0 ? ` Mẫu: ${quality.missing_price_symbols.join(", ")}.` : ""}</p>}{quality.symbols_missing_financial_statements > 0 && <p><strong>{quality.symbols_missing_financial_statements} mã chưa có BCTC.</strong>{quality.missing_financial_symbols.length > 0 ? ` Mẫu: ${quality.missing_financial_symbols.join(", ")}.` : ""}</p>}{quality.failed_sync_symbols.length > 0 && <p><strong>Mã đồng bộ lỗi:</strong> {quality.failed_sync_symbols.join(", ")}.</p>}</section>
           </div>
           <div className="source-table" role="table" aria-label="Trạng thái nguồn dữ liệu">{quality.sources.map((source) => <article role="row" key={source.name}><div><strong>{source.name}</strong><span className={`source-state ${source.availability}`}>{source.availability === "available" ? "Sẵn sàng" : source.availability === "configured" ? "Đã cấu hình" : source.availability === "fixture" ? "Fixture" : "Chưa khả dụng"}</span></div><p>{source.capabilities.join(" · ")}</p><dl><div><dt>Thành công gần nhất</dt><dd>{formatDate(source.last_success_at)}</dd></div><div><dt>Thất bại gần nhất</dt><dd>{formatDate(source.last_failure_at)}</dd></div><div><dt>Độ mới</dt><dd>{source.freshness}</dd></div></dl>{source.message && <small>{source.message}</small>}</article>)}</div>
           {quality.issues.length > 0 && <div className="quality-issues"><strong>Các giới hạn cần xử lý</strong><ul>{quality.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}

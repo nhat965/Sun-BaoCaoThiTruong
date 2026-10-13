@@ -1,4 +1,4 @@
-# Mạch Thị Trường — AI Market Intelligence V3
+# Mạch Thị Trường — AI Market Intelligence V4.1
 
 Ứng dụng nghiên cứu cổ phiếu Việt Nam với luồng hoàn chỉnh: tìm theo mã/tên → lấy và kiểm định OHLCV có nguồn → tính chỉ báo kỹ thuật → hiển thị biểu đồ → tổng hợp metadata tin liên quan → xuất báo cáo PDF.
 
@@ -9,6 +9,9 @@
 | Yahoo Finance chart API | Live, không chính thức | Không cần khóa; khả dụng phụ thuộc điều khoản/độ ổn định upstream. Mã HOSE dùng hậu tố `.VN`. |
 | Configurable RSS feeds | Live metadata | Chỉ dùng metadata, URL và tiêu đề; không sao chép toàn văn. Mặc định VnExpress, nguồn khác cấu hình qua `NEWS_FEEDS`. |
 | FireAnt | Theo dõi trạng thái; bị chặn khi thiếu token | Chỉ gọi `/monitoring/status` khi có token. Chưa tuyên bố dữ liệu nào là live khi chưa xác minh scope/entitlement. |
+| SSI FastConnect | BLOCKED | Tài liệu chính thức đã khảo sát; cần tài khoản, API key/secret và lần kiểm thử được cấp quyền. |
+| FiinGroup Datafeed | BLOCKED | Có phạm vi market/company/BCTC phù hợp; cần hợp đồng, credential và quyền phân phối. |
+| File được người dùng cấp quyền | Sẵn sàng | Nhập securities CSV/XLSX, corporate actions CSV và BCTC CSV có provenance. |
 | VPS SmartOne | Không kết nối | Không dùng API không được hỗ trợ; MVP không giao dịch. |
 | LLM | Tùy chọn | `POST /api/v1/analyst/chat` dùng tool outputs có evidence; thiếu cấu hình sẽ fallback xác định, không đoán số. |
 
@@ -101,6 +104,7 @@ curl -X POST http://localhost:8000/api/v1/stocks/HPG/financials/import \
   -H "Authorization: Bearer $ADMIN_API_TOKEN" \
   -H "Content-Type: text/csv" -H "X-Source-Name: authorized-financial-export" \
   --data-binary @financial-statements.csv
+curl http://localhost:8000/api/v1/stocks/HPG/financial-statements
 curl http://localhost:8000/api/v1/stocks/HPG/fundamentals
 curl -X POST http://localhost:8000/api/v1/analyst/chat -H "Content-Type: application/json" \
   -d '{"symbol":"HPG","question":"Tóm tắt rủi ro và dữ liệu cần theo dõi"}'
@@ -117,6 +121,30 @@ curl -X POST http://localhost:8000/api/v1/fundamentals/valuation/dcf/sensitivity
   -H "Content-Type: application/json" \
   -d '{"symbol":"HPG","forecast_free_cash_flows":[100,110],"discount_rates":[0.09,0.1,0.11],"terminal_growth_rates":[0.02,0.03,0.04],"net_debt":50,"shares_outstanding":10}'
 ```
+
+CSV BCTC cần các cột `period_end,period_type,fiscal_year,statement_type,item_code,value,unit`.
+Các cột nên có là `fiscal_quarter,reported_at,statement_scope,statement_status,currency,verification_status,source_url`.
+`period_type` nhận `quarter|year|ttm`; `statement_type` nhận `income|balance|cash_flow`;
+`statement_scope` nhận `consolidated|separate`. Đơn vị tiền hỗ trợ `VND`, `THOUSAND_VND`,
+`MILLION_VND`, `BILLION_VND` và được chuẩn hóa về VND trong khi vẫn giữ `raw_value/raw_unit`.
+Đơn vị `SHARES` và `RATIO` không đổi. Các `item_code` chính gồm `revenue`, `gross_profit`,
+`net_income`, `total_assets`, `total_equity`, `total_liabilities`, `operating_cash_flow`,
+`investing_cash_flow`, `financing_cash_flow`. Giá trị `verified` không bị bản
+`unverified` ghi đè.
+
+Đồng bộ giá có trạng thái, cursor và chống trùng lặp:
+
+```bash
+curl http://localhost:8000/api/v1/providers
+curl -X POST "http://localhost:8000/api/v1/sync/prices/HPG?provider=yahoo" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl -X POST http://localhost:8000/api/v1/sync/financials/HPG \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl http://localhost:8000/api/v1/sync/runs -H "Authorization: Bearer $ADMIN_API_TOKEN"
+```
+
+`sync/financials` trả `BLOCKED` cho đến khi một provider BCTC có credential, entitlement
+và lần gọi thật thành công; dữ liệu file không bị mô tả nhầm là đồng bộ tự động.
 
 Tạo snapshot thị trường và quản lý danh mục thủ công (các route ghi cần admin token):
 

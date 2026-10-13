@@ -25,10 +25,19 @@ from app.automation import (
     job_schema,
 )
 from app.config import Settings, get_settings
-from app.connectors.base import ConnectorError
+from app.connectors.base import ConnectorError, DataCapability
 from app.connectors.fireant import FireAntConnector
 from app.corporate_actions import import_corporate_actions, list_corporate_actions
+from app.data_pipeline import (
+    DataSyncService,
+    list_sync_runs,
+    provider_catalog,
+    record_file_import,
+)
 from app.database import (
+    DataSyncErrorRecord,
+    DataSyncRunRecord,
+    FinancialPeriodRecord,
     JobRecord,
     PriceObservation,
     SecurityRecord,
@@ -61,12 +70,14 @@ from app.schemas import (
     CorporateActionImportResult,
     DailyMarketReport,
     DataQualityReport,
+    DataSyncRun,
     DCFRequest,
     DCFSensitivityRequest,
     DCFSensitivityResult,
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    FinancialStatementsResponse,
     FinancialTrendResponse,
     JobRequest,
     JobResult,
@@ -76,6 +87,7 @@ from app.schemas import (
     PortfolioSummary,
     PortfolioTransactionInput,
     PriceSeries,
+    ProviderCapabilityStatus,
     SecuritiesExplorerResponse,
     SecuritiesImportResult,
     Security,
@@ -183,6 +195,11 @@ def sources(config: Settings = Depends(get_settings)) -> list[SourceStatus]:
     ]
 
 
+@app.get("/api/v1/providers", response_model=list[ProviderCapabilityStatus])
+def providers(config: Settings = Depends(get_settings)) -> list[ProviderCapabilityStatus]:
+    return provider_catalog(config)
+
+
 @app.get("/api/v1/sources/status", response_model=list[SourceStatus])
 async def source_status(config: Settings = Depends(get_settings)) -> list[SourceStatus]:
     static = sources(config)
@@ -216,6 +233,30 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         ]
         missing_price_symbols = sorted(
             row.symbol for row in active_securities if row.id not in security_ids_with_prices
+        )
+        security_ids_with_financials = set(
+            session.scalars(select(FinancialPeriodRecord.security_id).distinct()).all()
+        )
+        active_with_financials = [
+            row for row in active_securities if row.id in security_ids_with_financials
+        ]
+        missing_financial_symbols = sorted(
+            row.symbol
+            for row in active_securities
+            if row.id not in security_ids_with_financials
+        )
+        sync_error_records = session.scalar(select(func.count(DataSyncErrorRecord.id))) or 0
+        failed_sync_symbols = sorted(
+            symbol
+            for symbol in session.scalars(
+                select(DataSyncRunRecord.symbol)
+                .where(
+                    DataSyncRunRecord.status.in_(["FAILED", "BLOCKED"]),
+                    DataSyncRunRecord.symbol.is_not(None),
+                )
+                .distinct()
+            )
+            if symbol
         )
         price_observations_count = session.scalar(select(func.count(PriceObservation.id))) or 0
         last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
@@ -258,7 +299,14 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         recorded = health.get(source.name)
         diagnostics.append(
             SourceDiagnostic(
-                **source.model_dump(exclude={"last_checked_at", "message"}),
+                **source.model_dump(
+                    exclude={"availability", "last_checked_at", "message"}
+                ),
+                availability=(
+                    source.availability
+                    if source.availability == "fixture" or recorded is None
+                    else recorded.status
+                ),
                 last_checked_at=recorded.checked_at if recorded else source.last_checked_at,
                 message=recorded.message if recorded else source.message,
                 last_success_at=recorded.last_success_at if recorded else None,
@@ -276,6 +324,12 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         issues.append(
             f"{len(missing_price_symbols)} mã đang hoạt động chưa có lịch sử giá được lưu."
         )
+    if missing_financial_symbols:
+        issues.append(
+            f"{len(missing_financial_symbols)} mã đang hoạt động chưa có BCTC được lưu."
+        )
+    if sync_error_records:
+        issues.append(f"Có {sync_error_records} lỗi đồng bộ được lưu để xử lý.")
     if price_quality_alerts["price_jump_over_20_percent"]:
         issues.append(
             "Có biến động giá trên 20%; cần đối chiếu corporate action và nguồn gốc trước khi dùng."
@@ -298,12 +352,22 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         price_observations_count=price_observations_count,
         symbols_with_price_history=len(active_with_prices),
         symbols_missing_price_history=len(missing_price_symbols),
+        symbols_with_financial_statements=len(active_with_financials),
+        symbols_missing_financial_statements=len(missing_financial_symbols),
         price_coverage_percent=round(
             len(active_with_prices) / active_securities_count * 100, 2
         )
         if active_securities_count
         else 0,
+        financial_coverage_percent=round(
+            len(active_with_financials) / active_securities_count * 100, 2
+        )
+        if active_securities_count
+        else 0,
         missing_price_symbols=missing_price_symbols[:50],
+        missing_financial_symbols=missing_financial_symbols[:50],
+        sync_error_records=sync_error_records,
+        failed_sync_symbols=failed_sync_symbols[:50],
         price_quality_alerts=price_quality_alerts,
         latest_market_timestamp_by_exchange=latest_market_timestamp_by_exchange,
         last_market_timestamp=last_market_timestamp,
@@ -479,6 +543,15 @@ def import_securities(
             detail={"code": "invalid_csv_schema", "required": sorted(required_fields)},
         )
     result = import_securities_csv(csv_content, source_name[:128])
+    record_file_import(
+        capability=DataCapability.SECURITIES_METADATA,
+        symbol=None,
+        inserted=result.inserted,
+        updated=result.updated,
+        skipped=0,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
     audit_success(request, principal, result)
     return result
 
@@ -497,6 +570,15 @@ def import_securities_workbook(
         result = import_securities_xlsx(workbook, source_name[:128])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_file_import(
+        capability=DataCapability.SECURITIES_METADATA,
+        symbol=None,
+        inserted=result.inserted,
+        updated=result.updated,
+        skipped=0,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
     audit_success(request, principal, result, action="securities.import.xlsx")
     return result
 
@@ -518,6 +600,15 @@ def corporate_actions_import(
         result = import_corporate_actions(symbol, csv_content, source_name[:128])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_file_import(
+        capability=DataCapability.CORPORATE_ACTIONS,
+        symbol=symbol,
+        inserted=result.inserted,
+        updated=result.updated,
+        skipped=0,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
     audit_success(request, principal, result, action="corporate_actions.import")
     return result
 
@@ -557,8 +648,100 @@ def import_financials(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
+    record_file_import(
+        capability=DataCapability.INCOME_STATEMENT,
+        symbol=symbol,
+        inserted=result.inserted_periods + result.inserted_items,
+        updated=result.updated_periods + result.updated_items,
+        skipped=result.skipped_items,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
     audit_success(request, principal, result, action="financials.import")
     return result
+
+
+@app.get(
+    "/api/v1/stocks/{symbol}/financial-statements",
+    response_model=FinancialStatementsResponse,
+)
+def financial_statements(
+    symbol: str,
+    period_type: str | None = Query(default=None, pattern="^(quarter|year|ttm)$"),
+    statement_scope: str | None = Query(
+        default=None, pattern="^(consolidated|separate)$"
+    ),
+    limit: int = Query(12, ge=1, le=40),
+) -> FinancialStatementsResponse:
+    try:
+        with SessionLocal() as session:
+            return FinancialRepository(session).statements(
+                symbol,
+                period_type=period_type,
+                statement_scope=statement_scope,
+                limit=limit,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/sync/prices/{symbol}", response_model=DataSyncRun)
+async def sync_prices(
+    symbol: str,
+    request: Request,
+    provider: str = Query(default="auto", pattern="^(auto|yahoo|fixture)$"),
+    mode: str = Query(default="auto", pattern="^(auto|initial|incremental)$"),
+    limit: int = Query(520, ge=30, le=520),
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    try:
+        result = await DataSyncService(config).sync_prices(
+            symbol, provider_id=provider, requested_mode=mode, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectorError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.prices")
+    return result
+
+
+@app.post("/api/v1/sync/financials/{symbol}", response_model=DataSyncRun)
+def sync_financial_statements(
+    symbol: str,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    try:
+        result = DataSyncService(config).sync_financials(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.financials")
+    return result
+
+
+@app.get("/api/v1/sync/runs", response_model=list[DataSyncRun])
+def sync_runs(
+    symbol: str | None = None,
+    provider: str | None = None,
+    capability: str | None = None,
+    run_status: str | None = Query(
+        default=None,
+        alias="status",
+        pattern="^(RUNNING|SUCCESS|PARTIAL|FAILED|BLOCKED)$",
+    ),
+    limit: int = Query(50, ge=1, le=200),
+    principal: Principal = Depends(require_admin),
+) -> list[DataSyncRun]:
+    return list_sync_runs(
+        symbol=symbol,
+        provider=provider,
+        capability=capability,
+        status=run_status,
+        limit=limit,
+    )
 
 
 @app.get("/api/v1/stocks/{symbol}/fundamentals", response_model=FinancialMetricResult)

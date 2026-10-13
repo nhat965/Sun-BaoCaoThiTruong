@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     market_provider_priority: str = "yahoo"
     fireant_base_url: str = "https://api.fireant.vn"
     fireant_access_token: str | None = None
+    ssi_base_url: str = "https://api.ssi.com.vn"
+    ssi_api_key: str | None = None
+    ssi_api_secret: str | None = None
+    fiingroup_base_url: str | None = None
+    fiingroup_api_key: str | None = None
     admin_api_token: str | None = None
     reader_api_token: str | None = None
     admin_rate_limit_per_minute: int = 30

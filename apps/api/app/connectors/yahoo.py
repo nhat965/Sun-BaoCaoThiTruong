@@ -1,15 +1,17 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from app.connectors.base import ConnectorError, MarketDataConnector
+from app.connectors.base import ConnectorError, DataCapability, MarketDataConnector
 from app.database import SessionLocal
 from app.repositories import SecuritiesRepository
 from app.schemas import PriceBar, PriceSeries, Provenance, Security
 
 
 class YahooFinanceConnector(MarketDataConnector):
+    provider_id = "yahoo"
     name = "Yahoo Finance chart"
+    capabilities = frozenset({DataCapability.HISTORICAL_OHLCV})
 
     def __init__(self, timeout: float = 12) -> None:
         self.timeout = timeout
@@ -26,10 +28,29 @@ class YahooFinanceConnector(MarketDataConnector):
         return security
 
     async def prices(self, symbol: str, limit: int = 260) -> PriceSeries:
+        return await self._prices(symbol, limit, since=None)
+
+    async def prices_since(
+        self, symbol: str, since: datetime | None, limit: int = 260
+    ) -> PriceSeries:
+        return await self._prices(symbol, limit, since=since)
+
+    async def _prices(
+        self, symbol: str, limit: int, *, since: datetime | None
+    ) -> PriceSeries:
         security = self._resolve(symbol)
         provider_symbol = security.provider_ids.get("yahoo") or f"{security.symbol}.VN"
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{provider_symbol}"
-        params = {"range": "2y", "interval": "1d", "events": "div,splits"}
+        params: dict[str, str | int] = {
+            "interval": "1d",
+            "events": "div,splits",
+        }
+        if since is None:
+            params["range"] = "2y"
+        else:
+            cursor = since - timedelta(days=2)
+            params["period1"] = int(cursor.timestamp())
+            params["period2"] = int((datetime.now(UTC) + timedelta(days=1)).timestamp())
         try:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(

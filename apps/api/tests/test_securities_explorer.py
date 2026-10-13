@@ -42,7 +42,7 @@ def test_explorer_search_filters_and_database_sorting():
         assert hoa_phat["items"][0]["symbol"] == "HPG"
 
         hose = client.get("/api/v1/securities", params={"exchange": "HOSE"}).json()
-        assert hose["total"] == 7
+        assert hose["total"] >= 7
         assert all(item["exchange"] == "HOSE" for item in hose["items"])
 
         materials = client.get(

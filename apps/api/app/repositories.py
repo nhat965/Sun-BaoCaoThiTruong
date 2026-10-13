@@ -1,11 +1,11 @@
 import csv
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
 
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.fundamental import calculate_financial_metrics
@@ -25,6 +25,9 @@ from app.schemas import (
     FinancialInputs,
     FinancialMetricResult,
     FinancialStatementImportResult,
+    FinancialStatementItem,
+    FinancialStatementPeriod,
+    FinancialStatementsResponse,
     FinancialTrendResponse,
     NewsItem,
     PriceSeries,
@@ -127,17 +130,27 @@ class SecuritiesRepository:
         return security_schema(row), inserted
 
 
+@dataclass(frozen=True)
+class IngestionCounts:
+    inserted: int = 0
+    updated: int = 0
+    skipped: int = 0
+
+
 class PriceRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
     def upsert_series(self, series: PriceSeries) -> int:
+        return self.upsert_series_with_counts(series).inserted
+
+    def upsert_series_with_counts(self, series: PriceSeries) -> IngestionCounts:
         security_row = self.session.scalar(
             select(SecurityRecord).where(SecurityRecord.symbol == series.security.symbol)
         )
         if security_row is None:
             raise ValueError("Security must exist before storing prices")
-        inserted = 0
+        inserted = updated = skipped = 0
         previous = None
         for bar in series.bars:
             quality_flags = []
@@ -167,49 +180,29 @@ class PriceRepository:
                 "quality_flags_json": json.dumps(quality_flags),
                 "source_mode": series.provenance.mode,
             }
-            exists = self.session.scalar(
-                select(PriceObservation.id).where(
+            existing = self.session.scalar(
+                select(PriceObservation).where(
                     PriceObservation.security_id == security_row.id,
                     PriceObservation.provider == series.provenance.source,
                     PriceObservation.market_timestamp == bar.timestamp,
                     PriceObservation.interval == series.interval,
                 )
             )
-            if self.session.bind and self.session.bind.dialect.name == "sqlite":
-                statement = (
-                    sqlite_insert(PriceObservation)
-                    .values(**values)
-                    .on_conflict_do_update(
-                        index_elements=[
-                            "security_id",
-                            "provider",
-                            "market_timestamp",
-                            "interval",
-                        ],
-                        set_={
-                            "ingested_at": series.provenance.retrieved_at,
-                            "validation_status": series.provenance.validation_status,
-                            "adjustment_policy": series.provenance.adjustment_policy,
-                            "quality_flags_json": json.dumps(quality_flags),
-                            "source_mode": series.provenance.mode,
-                        },
-                    )
-                )
-                self.session.execute(statement)
-                inserted += int(exists is None)
+            if existing is None:
+                self.session.add(PriceObservation(**values))
+                inserted += 1
+            elif (
+                existing.validation_status == "valid"
+                and series.provenance.validation_status != "valid"
+            ):
+                skipped += 1
             else:
-                if exists is None:
-                    self.session.add(PriceObservation(**values))
-                    inserted += 1
-                else:
-                    self.session.execute(
-                        update(PriceObservation)
-                        .where(PriceObservation.id == exists)
-                        .values(**values)
-                    )
+                for key, value in values.items():
+                    setattr(existing, key, value)
+                updated += 1
             previous = bar
         self.session.flush()
-        return inserted
+        return IngestionCounts(inserted=inserted, updated=updated, skipped=skipped)
 
 
 class AuditRepository:
@@ -285,6 +278,15 @@ FINANCIAL_STATEMENT_TYPES = {"income", "balance", "cash_flow"}
 FINANCIAL_PERIOD_TYPES = {"quarter", "year", "ttm"}
 FINANCIAL_STATEMENT_SCOPES = {"consolidated", "separate"}
 FINANCIAL_STATEMENT_STATUSES = {"original", "amended"}
+FINANCIAL_VERIFICATION_STATUSES = {"verified", "unverified", "rejected"}
+FINANCIAL_UNIT_MULTIPLIERS = {
+    "VND": (Decimal(1), "VND"),
+    "THOUSAND_VND": (Decimal(1000), "VND"),
+    "MILLION_VND": (Decimal(1000000), "VND"),
+    "BILLION_VND": (Decimal(1000000000), "VND"),
+    "SHARES": (Decimal(1), "shares"),
+    "RATIO": (Decimal(1), "ratio"),
+}
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -307,6 +309,7 @@ class FinancialRepository:
         if security is None:
             raise ValueError(f"Mã {symbol.strip().upper()} chưa có trong securities master.")
         inserted_periods = updated_periods = inserted_items = updated_items = rejected = 0
+        skipped_items = 0
         errors: list[str] = []
         seen_periods: set[tuple[datetime, str]] = set()
         reader = csv.DictReader(StringIO(content))
@@ -346,7 +349,23 @@ class FinancialRepository:
                     )
                 if not item_code or len(item_code) > 64:
                     raise ValueError("item_code is required and must be <= 64 characters")
-                value = Decimal((row.get("value") or "").strip())
+                raw_value = Decimal((row.get("value") or "").strip())
+                raw_unit = (row.get("unit") or "VND").strip().upper()
+                if raw_unit not in FINANCIAL_UNIT_MULTIPLIERS:
+                    raise ValueError(
+                        "unit must be one of "
+                        f"{sorted(FINANCIAL_UNIT_MULTIPLIERS)}"
+                    )
+                multiplier, normalized_unit = FINANCIAL_UNIT_MULTIPLIERS[raw_unit]
+                value = raw_value * multiplier
+                verification_status = (
+                    row.get("verification_status") or "unverified"
+                ).strip().lower()
+                if verification_status not in FINANCIAL_VERIFICATION_STATUSES:
+                    raise ValueError(
+                        "verification_status must be one of "
+                        f"{sorted(FINANCIAL_VERIFICATION_STATUSES)}"
+                    )
                 fiscal_year = int((row.get("fiscal_year") or "").strip())
                 quarter_text = (row.get("fiscal_quarter") or "").strip()
                 fiscal_quarter = int(quarter_text) if quarter_text else None
@@ -371,28 +390,31 @@ class FinancialRepository:
                         reported_at=_parse_datetime(row.get("reported_at")),
                         source_name=source_name,
                         source_url=(row.get("source_url") or None),
-                        verification_status=(
-                            row.get("verification_status") or "unverified"
-                        ).lower(),
+                        verification_status=verification_status,
                         statement_scope=statement_scope,
                         statement_status=statement_status,
-                        unit=(row.get("unit") or "VND"),
-                        currency=(row.get("currency") or "VND"),
+                        unit="VND" if normalized_unit == "VND" else normalized_unit,
+                        currency=(row.get("currency") or "VND").upper(),
                         updated_at=datetime.now(UTC),
                     )
                     self.session.add(period)
                     self.session.flush()
                     inserted_periods += 1
                 else:
-                    period.source_name = source_name
-                    period.source_url = row.get("source_url") or period.source_url
-                    period.verification_status = (
-                        row.get("verification_status") or period.verification_status
-                    ).lower()
-                    period.statement_status = statement_status
-                    period.updated_at = datetime.now(UTC)
+                    may_update_period = not (
+                        period.verification_status == "verified"
+                        and verification_status != "verified"
+                    )
+                    if may_update_period:
+                        period.source_name = source_name
+                        period.source_url = row.get("source_url") or period.source_url
+                        period.verification_status = verification_status
+                        period.statement_status = statement_status
+                        period.unit = "VND" if normalized_unit == "VND" else normalized_unit
+                        period.currency = (row.get("currency") or period.currency).upper()
+                        period.updated_at = datetime.now(UTC)
                     period_key = (period_end, f"{period_type}:{statement_scope}")
-                    if period_key not in seen_periods:
+                    if may_update_period and period_key not in seen_periods:
                         updated_periods += 1
                 seen_periods.add((period_end, f"{period_type}:{statement_scope}"))
                 item = self.session.scalar(
@@ -409,25 +431,32 @@ class FinancialRepository:
                             statement_type=statement_type,
                             item_code=item_code,
                             value=value,
-                            unit=row.get("unit") or period.unit,
+                            unit=normalized_unit,
+                            raw_value=raw_value,
+                            raw_unit=raw_unit,
                             source_name=source_name,
                             source_url=row.get("source_url") or None,
-                            verification_status=(
-                                row.get("verification_status") or period.verification_status
-                            ).lower(),
+                            verification_status=verification_status,
                             updated_at=datetime.now(UTC),
                         )
                     )
                     inserted_items += 1
                 else:
-                    item.value = value
-                    item.source_name = source_name
-                    item.source_url = row.get("source_url") or item.source_url
-                    item.verification_status = (
-                        row.get("verification_status") or item.verification_status
-                    ).lower()
-                    item.updated_at = datetime.now(UTC)
-                    updated_items += 1
+                    if (
+                        item.verification_status == "verified"
+                        and verification_status != "verified"
+                    ):
+                        skipped_items += 1
+                    else:
+                        item.value = value
+                        item.unit = normalized_unit
+                        item.raw_value = raw_value
+                        item.raw_unit = raw_unit
+                        item.source_name = source_name
+                        item.source_url = row.get("source_url") or item.source_url
+                        item.verification_status = verification_status
+                        item.updated_at = datetime.now(UTC)
+                        updated_items += 1
             except (ArithmeticError, TypeError, ValueError) as exc:
                 rejected += 1
                 errors.append(f"line {line_number}: {exc}")
@@ -437,8 +466,97 @@ class FinancialRepository:
             updated_periods=updated_periods,
             inserted_items=inserted_items,
             updated_items=updated_items,
+            skipped_items=skipped_items,
             rejected=rejected,
             errors=errors[:100],
+        )
+
+    def statements(
+        self,
+        symbol: str,
+        *,
+        period_type: str | None = None,
+        statement_scope: str | None = None,
+        limit: int = 12,
+    ) -> FinancialStatementsResponse:
+        if period_type and period_type not in FINANCIAL_PERIOD_TYPES:
+            raise ValueError(f"period_type must be one of {sorted(FINANCIAL_PERIOD_TYPES)}")
+        if statement_scope and statement_scope not in FINANCIAL_STATEMENT_SCOPES:
+            raise ValueError(
+                f"statement_scope must be one of {sorted(FINANCIAL_STATEMENT_SCOPES)}"
+            )
+        security = self.session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
+        )
+        if security is None:
+            raise ValueError(f"Mã {symbol.strip().upper()} chưa có trong securities master.")
+        statement = select(FinancialPeriodRecord).where(
+            FinancialPeriodRecord.security_id == security.id
+        )
+        if period_type:
+            statement = statement.where(FinancialPeriodRecord.period_type == period_type)
+        if statement_scope:
+            statement = statement.where(
+                FinancialPeriodRecord.statement_scope == statement_scope
+            )
+        periods = list(
+            self.session.scalars(
+                statement.order_by(FinancialPeriodRecord.period_end.desc()).limit(limit)
+            )
+        )
+        payload = []
+        for period in periods:
+            rows = list(
+                self.session.scalars(
+                    select(FinancialStatementItemRecord)
+                    .where(FinancialStatementItemRecord.period_id == period.id)
+                    .order_by(
+                        FinancialStatementItemRecord.statement_type,
+                        FinancialStatementItemRecord.item_code,
+                    )
+                )
+            )
+            payload.append(
+                FinancialStatementPeriod(
+                    period_end=period.period_end,
+                    period_type=period.period_type,
+                    fiscal_year=period.fiscal_year,
+                    fiscal_quarter=period.fiscal_quarter,
+                    reported_at=period.reported_at,
+                    statement_scope=period.statement_scope,
+                    statement_status=period.statement_status,
+                    currency=period.currency,
+                    source_name=period.source_name,
+                    source_url=period.source_url,
+                    verification_status=period.verification_status,
+                    updated_at=period.updated_at,
+                    items=[
+                        FinancialStatementItem(
+                            statement_type=row.statement_type,
+                            item_code=row.item_code,
+                            value=float(row.value),
+                            unit=row.unit,
+                            raw_value=(
+                                float(row.raw_value) if row.raw_value is not None else None
+                            ),
+                            raw_unit=row.raw_unit,
+                            source_name=row.source_name,
+                            source_url=row.source_url,
+                            verification_status=row.verification_status,
+                            updated_at=row.updated_at,
+                        )
+                        for row in rows
+                    ],
+                )
+            )
+        return FinancialStatementsResponse(
+            symbol=security.symbol,
+            automatic_sync_status="blocked",
+            automatic_sync_message=(
+                "BLOCKED: chưa có provider BCTC được cấp quyền và gọi thành công; "
+                "dữ liệu hiện tại chỉ đến từ file được phép."
+            ),
+            periods=payload,
         )
 
     def calculate_latest(self, symbol: str) -> FinancialMetricResult:

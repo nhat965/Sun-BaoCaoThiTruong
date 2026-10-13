@@ -1,23 +1,28 @@
-# Test report — V4
+# Test report — V4.1 Task 02
 
-Date: 2026-10-12 (Asia/Bangkok)
+Date: 2026-10-13 (Asia/Bangkok)
 
 ## Automated checks
 
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 51 tests |
+| Backend `pytest -q` | PASS — 55 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0012` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0013` | PASS — temporary SQLite database |
 | CI PostgreSQL migration gate | CONFIGURED — PostgreSQL 16 service, full upgrade/downgrade/re-upgrade |
 | Dependency audit gate | CONFIGURED — `pip-audit` and production `npm audit` at high severity |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
-| Impeccable UI detector | PASS — no findings in changed frontend targets |
+| Impeccable UI detector | PASS — one side-border warning found and removed in the changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
 
 Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+
+Task 02 regressions additionally verify explicit provider capability gates, initial versus
+incremental price sync, persisted run/error counts, financial unit conversion, retention
+of raw value/unit, refusal to overwrite verified BCTC with unverified input, normalized
+statement reads and a persisted `BLOCKED` result when automatic BCTC access is unavailable.
 
 Task 01 browser QA verified the default 13-row registry without a query, unaccented
 `Hoa Phat` search returning HPG, HOSE and sector filters, symbol sorting, five-row
@@ -34,7 +39,18 @@ classification with uncertainty labels.
 
 ## Live smoke test
 
-HPG was requested through the live connector on 2026-10-12. Yahoo returned 260 daily bars; normalization marked them `valid`, incremental storage contained 260 unique observations, and `technical-v2` completed. The RSS request completed with zero currently matching headlines, which is a valid empty result rather than fabricated coverage.
+HPG and FPT were requested through the live Yahoo connector on 2026-10-13 using
+`scripts/verify_live_pipeline.py`. The first pipeline sync inserted 120 daily rows for each
+symbol. The immediate incremental sync inserted zero rows; counts remained 120 → 120 for
+both symbols. HPG used provider symbol `HPG.VN`, FPT used `FPT.VN`; the stored latest market
+timestamp was `2026-10-09T02:00:00+00:00`, with retrieval timestamps and exact source URLs
+persisted in `data_sync_runs`. Normalization marked both series `valid`.
+
+Browser QA against that database showed HPG/FPT live prices in Securities Explorer,
+HPG analysis with live provenance, an explicit automatic-BCTC `BLOCKED` badge, zero BCTC
+coverage rather than invented values, persisted sync-error diagnostics and no browser
+console warnings/errors. At 390×844, `innerWidth=390`, document `scrollWidth=375`, so the
+page had no horizontal overflow.
 
 This proves connectivity at that moment only. It does not establish market-data licensing, completeness, exchange-grade accuracy or future upstream availability.
 

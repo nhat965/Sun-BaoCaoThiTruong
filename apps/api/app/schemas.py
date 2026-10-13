@@ -119,6 +119,41 @@ class SourceDiagnostic(SourceStatus):
     consecutive_failures: int = 0
 
 
+class ProviderCapabilityStatus(BaseModel):
+    provider_id: str
+    name: str
+    documentation_url: str | None = None
+    documented_capabilities: list[str] = Field(default_factory=list)
+    enabled_capabilities: list[str] = Field(default_factory=list)
+    authentication: str
+    access_requirements: str
+    licensing: str
+    availability: Literal["available", "configured", "blocked", "fixture"]
+    last_success_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    test_result: str
+    cost_and_limits: str
+
+
+class DataSyncRun(BaseModel):
+    id: int
+    provider: str
+    capability: str
+    symbol: str | None = None
+    sync_mode: Literal["initial", "incremental"]
+    status: Literal["RUNNING", "SUCCESS", "PARTIAL", "FAILED", "BLOCKED"]
+    started_at: datetime
+    finished_at: datetime | None = None
+    cursor_from: datetime | None = None
+    cursor_to: datetime | None = None
+    inserted_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
+    error_count: int = 0
+    error_message: str | None = None
+    details: dict = Field(default_factory=dict)
+
+
 class DataQualityReport(BaseModel):
     generated_at: datetime
     market_data_mode: Literal["live", "fixture"]
@@ -128,8 +163,14 @@ class DataQualityReport(BaseModel):
     price_observations_count: int
     symbols_with_price_history: int = 0
     symbols_missing_price_history: int = 0
+    symbols_with_financial_statements: int = 0
+    symbols_missing_financial_statements: int = 0
     price_coverage_percent: float = Field(default=0, ge=0, le=100)
+    financial_coverage_percent: float = Field(default=0, ge=0, le=100)
     missing_price_symbols: list[str] = Field(default_factory=list)
+    missing_financial_symbols: list[str] = Field(default_factory=list)
+    sync_error_records: int = 0
+    failed_sync_symbols: list[str] = Field(default_factory=list)
     price_quality_alerts: dict[str, int] = Field(default_factory=dict)
     latest_market_timestamp_by_exchange: dict[str, datetime | None] = Field(
         default_factory=dict
@@ -250,8 +291,45 @@ class FinancialStatementImportResult(BaseModel):
     updated_periods: int
     inserted_items: int
     updated_items: int
+    skipped_items: int = 0
     rejected: int
     errors: list[str]
+
+
+class FinancialStatementItem(BaseModel):
+    statement_type: Literal["income", "balance", "cash_flow"]
+    item_code: str
+    value: float
+    unit: str
+    raw_value: float | None = None
+    raw_unit: str | None = None
+    source_name: str
+    source_url: str | None = None
+    verification_status: Literal["verified", "unverified", "rejected"]
+    updated_at: datetime
+
+
+class FinancialStatementPeriod(BaseModel):
+    period_end: datetime
+    period_type: Literal["quarter", "year", "ttm"]
+    fiscal_year: int
+    fiscal_quarter: int | None = None
+    reported_at: datetime | None = None
+    statement_scope: Literal["consolidated", "separate"]
+    statement_status: Literal["original", "amended"]
+    currency: str
+    source_name: str
+    source_url: str | None = None
+    verification_status: Literal["verified", "unverified", "rejected"]
+    updated_at: datetime
+    items: list[FinancialStatementItem]
+
+
+class FinancialStatementsResponse(BaseModel):
+    symbol: str
+    automatic_sync_status: Literal["available", "blocked"]
+    automatic_sync_message: str
+    periods: list[FinancialStatementPeriod]
 
 
 class ValuationRequest(BaseModel):

@@ -143,6 +143,22 @@ form small { color: var(--color-ink-muted); display: block; margin-block-start: 
 .financial-trend th:first-child, .financial-trend td:first-child { text-align: start; }
 .financial-trend th { color: var(--color-ink-muted); font-size: var(--text-xs); }
 .financial-trend small { color: var(--color-ink-muted); display: block; margin-block-start: var(--space-sm); }
+.statement-ledger { border-block-start: var(--rule-thin) solid var(--color-ink); margin-block-start: var(--space-xl); padding-block-start: var(--space-lg); }
+.statement-ledger-head { align-items: flex-start; display: flex; gap: var(--space-md); justify-content: space-between; }
+.statement-ledger-head h3, .statement-ledger-head p { margin-block-start: 0; }
+.statement-ledger-head p, .pipeline-message { color: var(--color-ink-muted); line-height: 1.5; }
+.statement-ledger table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin-block: var(--space-md); min-width: 56rem; width: 100%; }
+.statement-ledger th, .statement-ledger td { border-block-end: var(--rule-thin) solid var(--color-rule); padding: var(--space-sm); text-align: end; vertical-align: top; }
+.statement-ledger th:first-child, .statement-ledger td:first-child { left: 0; position: sticky; text-align: start; z-index: 1; }
+.statement-ledger th:first-child { background: var(--color-paper); }
+.statement-ledger td:first-child { background: var(--color-paper-raised); font-weight: 700; }
+.statement-ledger th { color: var(--color-ink-muted); font-size: var(--text-xs); }
+.statement-ledger small { color: var(--color-ink-muted); display: block; font-size: var(--text-xs); margin-block-start: var(--space-2xs); white-space: nowrap; }
+.missing-value { color: var(--color-ink-muted); font-size: var(--text-xs); white-space: nowrap; }
+.pipeline-state { border: var(--rule-thin) solid currentColor; border-radius: 999px; flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 700; padding: var(--space-2xs) var(--space-xs); }
+.pipeline-state.available { color: var(--color-positive); }
+.pipeline-state.blocked { color: var(--color-negative); }
+.pipeline-message { border-block-start: var(--rule-thin) solid var(--color-negative); margin-block: var(--space-md) 0; padding-block-start: var(--space-sm); }
 .dcf-form { display: grid; gap: var(--space-md); }
 .dcf-form label { min-width: 0; }
 .dcf-form input { font-size: var(--text-md); margin-block-start: var(--space-xs); text-transform: none; width: 100%; }
@@ -226,6 +242,8 @@ footer { display: flex; flex-direction: column; gap: var(--space-xs); padding: v
   .coverage-strip div + div { border-block-start: 0; border-inline-start: var(--rule-thin) solid var(--color-rule); }
   .coverage-strip div:nth-child(3) { border-block-start: var(--rule-thin) solid var(--color-rule); border-inline-start: 0; }
   .coverage-strip div:nth-child(4) { border-block-start: var(--rule-thin) solid var(--color-rule); }
+  .coverage-strip div:nth-child(5) { border-block-start: var(--rule-thin) solid var(--color-rule); border-inline-start: 0; }
+  .coverage-strip div:nth-child(6) { border-block-start: var(--rule-thin) solid var(--color-rule); }
   .coverage-strip dd { margin-block-start: var(--space-xs); text-align: start; }
   .source-table article { grid-template-columns: minmax(15rem, .8fr) minmax(12rem, .6fr) minmax(20rem, 1fr); }
   .source-table article > div { display: grid; justify-content: stretch; }
@@ -249,9 +267,10 @@ footer { display: flex; flex-direction: column; gap: var(--space-xs); padding: v
   .dcf-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .workbench-grid { grid-template-columns: minmax(0, 2.2fr) minmax(18rem, .8fr); }
   .indicator-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .coverage-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .coverage-strip div:nth-child(3), .coverage-strip div:nth-child(4) { border-block-start: 0; }
-  .coverage-strip div:nth-child(3) { border-inline-start: var(--rule-thin) solid var(--color-rule); }
+  .coverage-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .coverage-strip div:nth-child(3), .coverage-strip div:nth-child(5) { border-inline-start: var(--rule-thin) solid var(--color-rule); }
+  .coverage-strip div:nth-child(3) { border-block-start: 0; }
+  .coverage-strip div:nth-child(4) { border-block-start: var(--rule-thin) solid var(--color-rule); border-inline-start: 0; }
   .quality-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .evidence { grid-template-columns: minmax(0, 1fr) minmax(18rem, .65fr) minmax(20rem, 1fr); }
   .evidence ul { grid-column: auto; }

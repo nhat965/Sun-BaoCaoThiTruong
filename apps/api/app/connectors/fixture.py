@@ -1,14 +1,16 @@
 from datetime import UTC, datetime, timedelta
 from math import sin
 
-from app.connectors.base import ConnectorError, MarketDataConnector
+from app.connectors.base import ConnectorError, DataCapability, MarketDataConnector
 from app.database import SessionLocal
 from app.repositories import SecuritiesRepository
 from app.schemas import PriceBar, PriceSeries, Provenance, Security
 
 
 class FixtureConnector(MarketDataConnector):
+    provider_id = "fixture"
     name = "Synthetic fixture (development only)"
+    capabilities = frozenset({DataCapability.HISTORICAL_OHLCV})
 
     async def search(self, query: str) -> list[Security]:
         with SessionLocal() as session:

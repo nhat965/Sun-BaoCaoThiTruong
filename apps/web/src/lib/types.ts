@@ -102,8 +102,14 @@ export interface DataQualityReport {
   price_observations_count: number;
   symbols_with_price_history: number;
   symbols_missing_price_history: number;
+  symbols_with_financial_statements: number;
+  symbols_missing_financial_statements: number;
   price_coverage_percent: number;
+  financial_coverage_percent: number;
   missing_price_symbols: string[];
+  missing_financial_symbols: string[];
+  sync_error_records: number;
+  failed_sync_symbols: string[];
   price_quality_alerts: Record<string, number>;
   latest_market_timestamp_by_exchange: Record<string, string | null>;
   last_market_timestamp: string | null;
@@ -121,6 +127,42 @@ export interface DataQualityReport {
     message: string | null;
   }[];
   issues: string[];
+}
+
+export interface FinancialStatementItem {
+  statement_type: "income" | "balance" | "cash_flow";
+  item_code: string;
+  value: number;
+  unit: string;
+  raw_value: number | null;
+  raw_unit: string | null;
+  source_name: string;
+  source_url: string | null;
+  verification_status: "verified" | "unverified" | "rejected";
+  updated_at: string;
+}
+
+export interface FinancialStatementPeriod {
+  period_end: string;
+  period_type: "quarter" | "year" | "ttm";
+  fiscal_year: number;
+  fiscal_quarter: number | null;
+  reported_at: string | null;
+  statement_scope: "consolidated" | "separate";
+  statement_status: "original" | "amended";
+  currency: string;
+  source_name: string;
+  source_url: string | null;
+  verification_status: "verified" | "unverified" | "rejected";
+  updated_at: string;
+  items: FinancialStatementItem[];
+}
+
+export interface FinancialStatementsResponse {
+  symbol: string;
+  automatic_sync_status: "available" | "blocked";
+  automatic_sync_message: string;
+  periods: FinancialStatementPeriod[];
 }
 
 export interface SecuritiesExplorerItem {

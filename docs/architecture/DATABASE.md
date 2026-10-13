@@ -16,6 +16,12 @@ Alembic `0001` creates the MVP audit schema. Migration `0002` adds a database-ba
 
 `PriceRepository` performs incremental upserts against `uq_price_point`; repeated requests update a point instead of multiplying rows. Production schema changes use Alembic. `Base.metadata.create_all` remains a local/test convenience only.
 
+Migration `0013` adds `data_sync_runs` and `data_sync_errors`. Every ingestion records
+provider, capability, symbol, initial/incremental mode, cursor, counts, timestamps and a
+bounded error. Financial items additionally keep `raw_value` and `raw_unit` beside the
+normalized value/unit so conversions remain auditable. A verified item cannot be
+downgraded by an unverified copy.
+
 For an unversioned legacy MVP database, run `python scripts/adopt_legacy_database.py` before `alembic upgrade head`. The script refuses unknown layouts and stamps only a verified baseline or already-complete V2 schema.
 
 V4 adds audit-safe valuation persistence and atomic automation state transitions. `jobs.status` is `QUEUED`, `RUNNING`, `RETRY_PENDING` or `FAILED/SUCCESS`; a unique idempotency key prevents duplicate scheduled rows and `job_runs` records execution attempts.
