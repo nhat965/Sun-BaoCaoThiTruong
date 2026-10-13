@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { SecuritiesExplorerItem, SecuritiesExplorerResponse } from "@/lib/types";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1";
 const integer = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
 const WATCHLIST_KEY = "market-intelligence:watchlist";

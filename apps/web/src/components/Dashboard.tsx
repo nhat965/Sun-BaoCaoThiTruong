@@ -5,7 +5,10 @@ import type { Analysis, AnalystResponse, DataQualityReport, FinancialMetricResul
 import { PriceChart } from "./PriceChart";
 import { SecuritiesExplorer } from "./SecuritiesExplorer";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+// Use the same-origin proxy by default so Codex/in-app browsers do not need to
+// make a cross-origin request to the backend port. Set NEXT_PUBLIC_API_BASE_URL
+// only when the frontend is intentionally served independently.
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1";
 const money = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const decimal = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
 const statementItems = [
