@@ -1,8 +1,8 @@
 import json
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
