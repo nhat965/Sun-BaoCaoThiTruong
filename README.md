@@ -188,3 +188,26 @@ PostgreSQL 16 và chặn dependency production có lỗ hổng mức `high` tr�
 
 Xem [implementation status](docs/IMPLEMENTATION_STATUS.md), [test report](docs/testing/TEST_REPORT.md), [architecture](docs/architecture/ARCHITECTURE.md), và [data sources](docs/integrations/DATA_SOURCES.md).
 
+
+## Đồng bộ BCTC tự động từ nguồn HTTPS CSV được cấp quyền
+
+Nếu nhà cung cấp dữ liệu hoặc hệ thống nội bộ của bạn cho phép tự động truy xuất CSV BCTC,
+cấu hình các biến môi trường sau **chỉ sau khi đã xác minh quyền sử dụng dữ liệu**:
+
+```dotenv
+FINANCIAL_CSV_URL_TEMPLATE=https://your-licensed-data-host.example/financials/{symbol}.csv
+FINANCIAL_CSV_BEARER_TOKEN=replace-with-your-provider-token
+FINANCIAL_CSV_RIGHTS_CONFIRMED=true
+```
+
+Endpoint `POST /api/v1/sync/financials/{symbol}` (yêu cầu admin bearer token)
+sẽ lấy CSV bằng HTTPS, kiểm tra kích thước, chuẩn hóa qua cùng logic CSV hiện tại
+và lưu trạng thái đồng bộ vào `/api/v1/sync/runs`.
+Endpoint này có thể được gọi từ cron/worker đã được vận hành và cấp quyền; dự án **chưa**
+triển khai một scheduler tự chạy production cho BCTC.
+Feed phải hỗ trợ CSV có các cột `period_end,period_type,fiscal_year,statement_type,item_code,value,unit`;
+xem định dạng đầy đủ ở hướng dẫn nhập BCTC phía trên.
+Không nhúng token vào URL; dùng `FINANCIAL_CSV_BEARER_TOKEN`.
+Cơ chế này không phải tích hợp API native của FiinGroup hoặc FireAnt và không tự cấp
+quyền phân phối dữ liệu. Khi chưa cấu hình quyền, API trả `BLOCKED` thay vì tự tạo dữ liệu.
+
