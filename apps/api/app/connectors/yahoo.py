@@ -108,6 +108,9 @@ class YahooFinanceConnector(MarketDataConnector):
                 delayed=True,
                 validation_status="partial",
                 adjustment_policy="unadjusted; corporate actions not independently verified",
+                coverage="security",
+                freshness="daily/delayed",
+                last_updated=datetime.now(UTC),
                 notes=(
                     f"currency={meta.get('currency', 'VND')}; "
                     f"exchangeTimezone={meta.get('exchangeTimezoneName', 'unknown')}"

@@ -15,6 +15,9 @@ class Provenance(BaseModel):
     delayed: bool = True
     validation_status: Literal["valid", "partial", "invalid"] = "valid"
     adjustment_policy: str = "unadjusted"
+    coverage: str = "security"
+    freshness: str = "unknown"
+    last_updated: datetime | None = None
     notes: str | None = None
 
 
@@ -41,6 +44,8 @@ class PriceBar(BaseModel):
     low: float
     close: float
     volume: int
+    actual_trading_value: float | None = None
+    market_cap: float | None = None
 
 
 class PriceSeries(BaseModel):
@@ -178,6 +183,16 @@ class DataQualityReport(BaseModel):
     )
     last_market_timestamp: datetime | None = None
     last_retrieval_timestamp: datetime | None = None
+    active_stock_count: int = 0
+    stocks_with_20_sessions: int = 0
+    stocks_with_50_sessions: int = 0
+    stocks_with_200_sessions: int = 0
+    stocks_with_market_cap: int = 0
+    stocks_with_foreign_flow: int = 0
+    universe_coverage_by_exchange: dict[str, dict[str, int | float]] = Field(
+        default_factory=dict
+    )
+    market_index_coverage: dict[str, int | float] = Field(default_factory=dict)
     sources: list[SourceDiagnostic]
     issues: list[str] = Field(default_factory=list)
 
@@ -600,6 +615,30 @@ class MarketIndexObservation(BaseModel):
     change_percent: float | None = None
     market_timestamp: datetime
     source: str
+    provider: str | None = None
+    source_url: str | None = None
+    market_session: str | None = None
+    retrieved_at: datetime | None = None
+    last_updated: datetime | None = None
+    data_mode: Literal[
+        "live", "delayed", "historical", "stale", "fixture", "unavailable"
+    ] = "unavailable"
+    validation_status: Literal["valid", "partial", "unvalidated", "invalid"] = "unvalidated"
+    coverage: str = "index"
+    freshness: str = "unknown"
+    adjustment_policy: str = "unknown"
+
+
+class MarketIndicesResponse(BaseModel):
+    as_of: datetime | None = None
+    market_session: str | None = None
+    data_status: Literal["available", "partial", "unavailable"] = "unavailable"
+    source: str | None = None
+    coverage: dict[str, int | float] = Field(default_factory=dict)
+    indices: list[MarketIndexObservation] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    formula_version: str = "market-foundation-v1"
 
 
 class MarketOverview(BaseModel):

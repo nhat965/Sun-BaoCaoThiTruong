@@ -46,6 +46,12 @@ from app.database import (
     ValuationResultRecord,
     init_db,
 )
+from app.market_foundation import (
+    MarketIndexImportResult,
+    canonical_market_universe,
+    import_market_indices,
+    list_market_indices,
+)
 from app.market_reporting import (
     build_market_overview,
     create_daily_market_report,
@@ -82,6 +88,7 @@ from app.schemas import (
     FinancialValidationReport,
     JobRequest,
     JobResult,
+    MarketIndicesResponse,
     MarketOverview,
     PortfolioCreate,
     PortfolioImportResult,
@@ -295,6 +302,8 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
             row.source_name: row for row in session.scalars(select(SourceHealthRecord)).all()
         }
 
+    universe = canonical_market_universe()
+    index_payload = list_market_indices()
     diagnostics = []
     for source in sources(config):
         recorded = health.get(source.name)
@@ -343,6 +352,8 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         issues.append("Có nguồn đã cấu hình nhưng chưa có lần truy xuất thành công được xác minh.")
     if active_securities_count < 100:
         issues.append("Securities master mới là tập bootstrap, chưa có độ phủ toàn thị trường.")
+    if index_payload.data_status == "unavailable":
+        issues.append("Chưa có dữ liệu chỉ số thị trường được cấp quyền lưu trữ.")
 
     return DataQualityReport(
         generated_at=datetime.now(UTC),
@@ -373,6 +384,17 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         latest_market_timestamp_by_exchange=latest_market_timestamp_by_exchange,
         last_market_timestamp=last_market_timestamp,
         last_retrieval_timestamp=last_retrieval_timestamp,
+        active_stock_count=universe.active_count,
+        stocks_with_20_sessions=universe.history_20_count,
+        stocks_with_50_sessions=universe.history_50_count,
+        stocks_with_200_sessions=universe.history_200_count,
+        stocks_with_market_cap=universe.market_cap_count,
+        stocks_with_foreign_flow=universe.foreign_flow_count,
+        universe_coverage_by_exchange={
+            exchange: {"active_count": count}
+            for exchange, count in universe.exchange_distribution.items()
+        },
+        market_index_coverage=index_payload.coverage,
         sources=diagnostics,
         issues=issues,
     )
@@ -511,6 +533,28 @@ def securities_explorer(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+
+
+@app.get("/api/v1/market/indices", response_model=MarketIndicesResponse)
+def market_indices() -> MarketIndicesResponse:
+    return list_market_indices()
+
+
+@app.post("/api/v1/market/indices/import", response_model=MarketIndexImportResult)
+def market_indices_import(
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="authorized-index-import", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+) -> MarketIndexImportResult:
+    if len(csv_content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        result = import_market_indices(csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="market.indices.import")
+    return result
 
 
 @app.get("/api/v1/stocks/{symbol}", response_model=Security)

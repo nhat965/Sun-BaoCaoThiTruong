@@ -207,12 +207,24 @@ class PriceRepository:
                 "low": Decimal(str(bar.low)),
                 "close": Decimal(str(bar.close)),
                 "volume": bar.volume,
+                "actual_trading_value": (
+                    Decimal(str(bar.actual_trading_value))
+                    if bar.actual_trading_value is not None
+                    else None
+                ),
+                "market_cap": (
+                    Decimal(str(bar.market_cap)) if bar.market_cap is not None else None
+                ),
                 "currency": series.security.currency,
                 "adjusted": series.adjusted,
                 "validation_status": series.provenance.validation_status,
                 "adjustment_policy": series.provenance.adjustment_policy,
                 "quality_flags_json": json.dumps(quality_flags),
                 "source_mode": series.provenance.mode,
+                "source_url": series.provenance.source_url,
+                "coverage": series.provenance.coverage,
+                "freshness": series.provenance.freshness,
+                "last_updated": series.provenance.last_updated or series.provenance.retrieved_at,
             }
             existing = self.session.scalar(
                 select(PriceObservation).where(
@@ -241,12 +253,18 @@ class PriceRepository:
                     "low",
                     "close",
                     "volume",
+                    "actual_trading_value",
+                    "market_cap",
                     "currency",
                     "adjusted",
                     "validation_status",
                     "adjustment_policy",
                     "quality_flags_json",
                     "source_mode",
+                    "source_url",
+                    "coverage",
+                    "freshness",
+                    "last_updated",
                 }
                 unchanged = all(
                     getattr(existing, key) == value

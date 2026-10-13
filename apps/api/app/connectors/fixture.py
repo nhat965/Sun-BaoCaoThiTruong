@@ -50,6 +50,9 @@ class FixtureConnector(MarketDataConnector):
                 delayed=True,
                 validation_status="valid",
                 adjustment_policy="synthetic-unadjusted",
+                coverage="security",
+                freshness="fixture",
+                last_updated=datetime.now(UTC),
                 notes="Dữ liệu tổng hợp xác định; không phải dữ liệu thị trường.",
             ),
         )

@@ -76,14 +76,53 @@ class PriceObservation(Base):
     low: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     close: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     volume: Mapped[int] = mapped_column(BigInteger)
+    actual_trading_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 6), nullable=True
+    )
+    market_cap: Mapped[Decimal | None] = mapped_column(Numeric(28, 6), nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="VND")
     adjusted: Mapped[bool] = mapped_column(Boolean, default=False)
     validation_status: Mapped[str] = mapped_column(String(24), default="valid")
     adjustment_policy: Mapped[str] = mapped_column(String(64), default="unadjusted")
     quality_flags_json: Mapped[str] = mapped_column(Text, default="[]")
     source_mode: Mapped[str] = mapped_column(String(16), default="unknown")
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    coverage: Mapped[str] = mapped_column(String(32), default="security")
+    freshness: Mapped[str] = mapped_column(String(32), default="unknown")
+    last_updated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     security: Mapped[SecurityRecord] = relationship(back_populates="prices")
+
+
+class MarketIndexObservationRecord(Base):
+    __tablename__ = "market_index_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "provider_id",
+            "market_session_date",
+            name="uq_market_index_provider_session",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    exchange: Mapped[str] = mapped_column(String(32), index=True)
+    market_session_date: Mapped[date] = mapped_column(Date, index=True)
+    market_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    previous_close: Mapped[Decimal | None] = mapped_column(Numeric(20, 6), nullable=True)
+    provider: Mapped[str] = mapped_column(String(128), index=True)
+    provider_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    data_mode: Mapped[str] = mapped_column(String(16), default="unavailable")
+    validation_status: Mapped[str] = mapped_column(String(24), default="unvalidated")
+    coverage: Mapped[str] = mapped_column(String(32), default="index")
+    freshness: Mapped[str] = mapped_column(String(32), default="unknown")
+    adjustment_policy: Mapped[str] = mapped_column(String(128), default="unknown")
 
 
 class AnalysisRun(Base):
