@@ -33,7 +33,7 @@ def test_market_calendar_uses_vietnam_timezone_and_does_not_treat_weekends_as_mi
     assert calendar.classify(date(2026, 1, 3), "HOSE").status == "weekend"
     weekday = calendar.classify(date(2026, 1, 2), "HOSE")
     assert weekday.status == "trading_candidate"
-    assert "official holiday" in weekday.limitations[0].lower()
+    assert "holiday calendar" in weekday.limitations[0].lower()
 
 
 def test_market_universe_reports_exchange_and_history_coverage_without_inventing_denominators():

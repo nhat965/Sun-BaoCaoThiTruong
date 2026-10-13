@@ -236,10 +236,13 @@ def import_market_indices(csv_content: str, source_name: str) -> MarketIndexImpo
                         MarketIndexObservationRecord.market_session_date == session_date,
                     )
                 )
+                material_keys = {
+                    key for key in values if key != "last_updated"
+                }
                 if existing is None:
                     session.add(MarketIndexObservationRecord(**values))
                     result.inserted += 1
-                elif all(getattr(existing, key) == value for key, value in values.items()) or (
+                elif all(getattr(existing, key) == values[key] for key in material_keys) or (
                     existing.validation_status == "valid"
                     and validation_status != "valid"
                 ):

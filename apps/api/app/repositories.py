@@ -264,7 +264,6 @@ class PriceRepository:
                     "source_url",
                     "coverage",
                     "freshness",
-                    "last_updated",
                 }
                 unchanged = all(
                     getattr(existing, key) == value
