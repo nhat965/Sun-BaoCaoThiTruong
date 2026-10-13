@@ -6,8 +6,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from sqlalchemy import select
 
 from app.database import ReportSnapshotRecord, SecurityRecord, SessionLocal
+from app.market_trend import calculate_market_breadth, calculate_market_regime
 from app.price_integrity import canonical_daily_prices
+from app.risk_scenarios import calculate_risks, calculate_scenarios
 from app.schemas import DailyMarketReport, MarketIndexObservation, MarketOverview
+from app.sector_liquidity import calculate_liquidity, calculate_sectors
 
 
 def _utc(value: datetime) -> datetime:
@@ -138,6 +141,12 @@ def create_daily_market_report(report_type: str, trading_date: date | None = Non
     if report_type not in {"pre_market", "post_market"}:
         raise ValueError("report_type must be pre_market or post_market")
     overview = build_market_overview()
+    breadth = calculate_market_breadth()
+    regime = calculate_market_regime()
+    liquidity = calculate_liquidity()
+    risks = calculate_risks()
+    scenarios = calculate_scenarios()
+    sectors = calculate_sectors()
     selected_date = trading_date or (overview.as_of.date() if overview.as_of else datetime.now(UTC).date())
     if selected_date.weekday() >= 5:
         raise ValueError("Daily market reports are not generated for weekends")
@@ -158,15 +167,31 @@ def create_daily_market_report(report_type: str, trading_date: date | None = Non
         ],
         "watchlist": ["Watchlist cần được cấu hình bởi người dùng; báo cáo không tự chọn mã."],
         "risks": list(overview.limitations),
+        "regime": [
+            f"{regime.regime}: " + " ".join(regime.evidence)
+            if regime.evidence
+            else f"Regime {regime.regime}; chưa có evidence bổ sung.",
+        ],
+        "breadth": [
+            f"A/D difference: {breadth.advance_decline_difference}; MA20 breadth: {breadth.above_ma20_percent}%.",
+        ],
+        "liquidity": [
+            f"Relative volume: {liquidity.relative_volume}; total volume: {liquidity.total_volume}.",
+        ],
+        "provenance": [
+            f"Breadth source={breadth.source}, as_of={breadth.as_of}, status={breadth.data_status}.",
+            f"Liquidity source={liquidity.source}, as_of={liquidity.as_of}, status={liquidity.data_status}.",
+        ],
+        "limitations": sorted({*overview.limitations, *breadth.limitations, *regime.limitations, *liquidity.limitations, *risks.limitations, *scenarios.limitations}),
     }
+    sections["risks"] = [f"{signal.severity}: {signal.title} — {' '.join(signal.evidence)}" for signal in risks.signals] or ["Không có risk signal được kích hoạt."]
+    sections["scenarios"] = [f"{item.scenario_id}: {item.label}; phủ định khi: {'; '.join(item.invalidation_conditions)}" for item in scenarios.scenarios]
     if report_type == "pre_market":
-        sections["scenarios"] = [
-            "Dùng dữ liệu phiên trước làm mốc; không suy đoán sự kiện qua đêm khi chưa có nguồn."
-        ]
+        sections["scenarios"].append("Dùng dữ liệu phiên trước làm mốc; không suy đoán sự kiện qua đêm khi chưa có nguồn.")
     else:
         sections["sectors"] = [
-            f"{sector}: {change:+.2f}%"
-            for sector, change in overview.sector_performance_percent.items()
+            f"{item.sector_name}: {item.performance_1d_percent:+.2f}% (coverage={item.coverage.get('current_session_count', 0)})."
+            for item in sectors.sectors if item.performance_1d_percent is not None
         ] or ["Chưa đủ dữ liệu phân ngành để tính hiệu suất."]
     snapshot = DailyMarketReport(
         snapshot_key=f"market-{report_type}:{selected_date.isoformat()}",
