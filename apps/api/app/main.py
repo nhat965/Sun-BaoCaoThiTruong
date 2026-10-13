@@ -89,6 +89,7 @@ from app.schemas import (
     FinancialValidationReport,
     JobRequest,
     JobResult,
+    LiquidityResponse,
     MarketBreadthResponse,
     MarketIndicesResponse,
     MarketOverview,
@@ -99,6 +100,7 @@ from app.schemas import (
     PortfolioTransactionInput,
     PriceSeries,
     ProviderCapabilityStatus,
+    SectorIntelligenceResponse,
     SecuritiesExplorerResponse,
     SecuritiesImportResult,
     Security,
@@ -112,6 +114,7 @@ from app.schemas import (
     WatchlistItemRequest,
     WatchlistRequest,
 )
+from app.sector_liquidity import calculate_liquidity, calculate_sectors
 from app.securities_explorer import list_securities
 from app.services import AnalysisService
 from app.social import analyze_social_batch
@@ -416,6 +419,23 @@ def market_breadth() -> MarketBreadthResponse:
 @app.get("/api/v1/market/regime", response_model=MarketRegimeResponse)
 def market_regime() -> MarketRegimeResponse:
     return calculate_market_regime()
+
+
+@app.get("/api/v1/market/sectors", response_model=SectorIntelligenceResponse)
+def market_sectors(
+    sort_by: str = Query(default="performance_1d", max_length=32),
+) -> SectorIntelligenceResponse:
+    return calculate_sectors(sort_by=sort_by)
+
+
+@app.get("/api/v1/market/sectors/{sector_id}", response_model=SectorIntelligenceResponse)
+def market_sector_detail(sector_id: str) -> SectorIntelligenceResponse:
+    return calculate_sectors(sector_filter=sector_id)
+
+
+@app.get("/api/v1/market/liquidity", response_model=LiquidityResponse)
+def market_liquidity() -> LiquidityResponse:
+    return calculate_liquidity()
 
 
 @app.post("/api/v1/market/reports/{report_type}", response_model=DailyMarketReport)
