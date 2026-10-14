@@ -203,11 +203,19 @@ def provider_catalog(settings: Settings) -> list[ProviderCapabilityStatus]:
             authentication="Commercial provider credentials",
             access_requirements="FiinGroup contract, entitlement and redistribution terms.",
             licensing="Commercial data agreement required.",
-            availability="configured" if settings.fiingroup_api_key else "blocked",
-            test_result=(
-                "Credential configured; connector not enabled until contract scope and a real call are verified."
+            availability=(
+                "configured"
                 if settings.fiingroup_api_key
-                else "BLOCKED: no FiinGroup credential or entitlement supplied."
+                and settings.fiingroup_financial_endpoint_template
+                and settings.fiingroup_rights_confirmed
+                else "blocked"
+            ),
+            test_result=(
+                "Contract endpoint and credential configured; connector remains disabled until a real call is verified."
+                if settings.fiingroup_api_key
+                and settings.fiingroup_financial_endpoint_template
+                and settings.fiingroup_rights_confirmed
+                else "BLOCKED: FiinGroup credential, endpoint, or rights confirmation is missing."
             ),
             cost_and_limits="Contact provider; public pricing was not verified.",
         ),
