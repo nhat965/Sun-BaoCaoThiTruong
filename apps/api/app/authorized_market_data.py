@@ -154,7 +154,8 @@ def preview_authorized_prices(content: str, source_name: str) -> AuthorizedPrice
 
 def import_authorized_prices(content: str, source_name: str) -> AuthorizedPriceImportResult:
     grouped, errors, retrieved_at = _parse_rows(content, source_name)
-    inserted = updated = skipped = rejected = 0
+    inserted = updated = skipped = 0
+    rejected = len(errors)
     symbols: set[str] = set()
     with SessionLocal() as session:
         securities = SecuritiesRepository(session)
