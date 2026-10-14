@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     fireant_base_url: str = "https://api.fireant.vn"
     fireant_access_token: str | None = None
     ssi_base_url: str = "https://api.ssi.com.vn"
+    ssi_auth_url: str = "https://api.ssi.com.vn/api/v3/auth/token"
+    ssi_environment: str = "production"
     ssi_api_key: str | None = None
     ssi_api_secret: str | None = None
     fiingroup_base_url: str | None = None
