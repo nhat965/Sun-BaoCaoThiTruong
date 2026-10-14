@@ -17,6 +17,7 @@ from app.analytics.valuation import (
     calculate_relative_valuation,
 )
 from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
+from app.authorized_market_data import import_authorized_prices, preview_authorized_prices
 from app.automation import (
     AutomationService,
     add_watchlist_item,
@@ -75,6 +76,7 @@ from app.schemas import (
     AnalysisResponse,
     AnalystRequest,
     AnalystResponse,
+    AuthorizedPriceImportResult,
     CorporateAction,
     CorporateActionImportResult,
     DailyMarketReport,
@@ -732,6 +734,48 @@ def securities_explorer(
 @app.get("/api/v1/market/indices", response_model=MarketIndicesResponse)
 def market_indices() -> MarketIndicesResponse:
     return list_market_indices()
+
+
+@app.post("/api/v1/market/prices/import/preview", response_model=AuthorizedPriceImportResult)
+def market_prices_import_preview(
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="authorized-ohlcv-preview", alias="X-Source-Name"),
+    _: Principal = Depends(require_admin),
+) -> AuthorizedPriceImportResult:
+    """Validate an operator-authorized OHLCV file without writing to the database."""
+    if len(csv_content.encode("utf-8")) > 5_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        return preview_authorized_prices(csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/market/prices/import", response_model=AuthorizedPriceImportResult)
+def market_prices_import(
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="authorized-ohlcv-import", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+) -> AuthorizedPriceImportResult:
+    """Import OHLCV only from a file the operator is authorized to use."""
+    if len(csv_content.encode("utf-8")) > 5_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        result = import_authorized_prices(csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_file_import(
+        capability=DataCapability.HISTORICAL_OHLCV,
+        symbol=None,
+        inserted=result.inserted,
+        updated=result.updated,
+        skipped=result.skipped,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
+    audit_success(request, principal, result, action="market.prices.import")
+    return result
 
 
 @app.post("/api/v1/market/indices/import", response_model=MarketIndexImportResult)
