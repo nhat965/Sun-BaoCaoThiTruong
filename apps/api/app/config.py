@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     ssi_environment: str = "production"
     ssi_api_key: str | None = None
     ssi_api_secret: str | None = None
+    # Must be copied from an approved SSI contract; there is intentionally no default.
+    ssi_ohlc_endpoint_template: str | None = None
     fiingroup_base_url: str | None = None
     fiingroup_api_key: str | None = None
     financial_csv_url_template: str | None = None
