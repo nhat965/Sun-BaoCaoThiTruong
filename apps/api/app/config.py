@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     ssi_ohlc_endpoint_template: str | None = None
     fiingroup_base_url: str | None = None
     fiingroup_api_key: str | None = None
+    fiingroup_financial_endpoint_template: str | None = None
+    fiingroup_rights_confirmed: bool = False
     financial_csv_url_template: str | None = None
     financial_csv_allowed_hosts: str = ""
     financial_csv_bearer_token: str | None = None
