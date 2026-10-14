@@ -11,7 +11,7 @@ class Provenance(BaseModel):
     provider_symbol: str
     retrieved_at: datetime
     market_timestamp: datetime | None = None
-    mode: Literal["live", "fixture"]
+    mode: Literal["live", "fixture", "authorized"]
     delayed: bool = True
     validation_status: Literal["valid", "partial", "invalid"] = "valid"
     adjustment_policy: str = "unadjusted"
@@ -214,6 +214,19 @@ class SecuritiesImportResult(BaseModel):
     updated: int
     rejected: int
     errors: list[str]
+
+
+class AuthorizedPriceImportResult(BaseModel):
+    inserted: int
+    updated: int
+    skipped: int
+    rejected: int
+    symbols: list[str] = Field(default_factory=list)
+    source_name: str
+    data_mode: Literal["authorized"] = "authorized"
+    validation_status: Literal["valid", "partial", "rejected"]
+    retrieved_at: datetime
+    errors: list[str] = Field(default_factory=list)
 
 
 class SecuritiesExplorerItem(BaseModel):
@@ -848,7 +861,7 @@ class MarketScenariosResponse(BaseModel):
 class MarketOverview(BaseModel):
     status: Literal["available", "partial", "unavailable"]
     as_of: datetime | None = None
-    source_mode: Literal["live", "fixture", "mixed", "unknown"] = "unknown"
+    source_mode: Literal["live", "fixture", "authorized", "mixed", "unknown"] = "unknown"
     sources: list[str] = Field(default_factory=list)
     active_stock_count: int = 0
     stocks_with_two_sessions: int = 0

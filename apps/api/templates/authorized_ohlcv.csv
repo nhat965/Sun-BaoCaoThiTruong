@@ -1,0 +1,2 @@
+symbol,trading_date,market_timestamp,open,high,low,close,volume,actual_trading_value,market_cap,provider,provider_id,retrieved_at,source_url,adjusted,validation_status
+HPG,2026-10-12,2026-10-12T14:45:00+07:00,100,102,99,101,100000,,,authorized_file,authorized_file,2026-10-13T01:00:00+00:00,https://authorized.example/export.csv,false,valid
