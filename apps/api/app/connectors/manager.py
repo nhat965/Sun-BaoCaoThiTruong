@@ -6,6 +6,7 @@ from threading import RLock
 from app.config import Settings
 from app.connectors.base import ConnectorError, MarketDataConnector
 from app.connectors.fixture import FixtureConnector
+from app.connectors.ssi import SsiFastConnectConnector
 from app.connectors.yahoo import YahooFinanceConnector
 from app.database import SessionLocal
 from app.repositories import SourceHealthRepository
@@ -104,7 +105,10 @@ class ConnectorManager:
         if settings.market_data_mode == "fixture":
             self.providers: list[MarketDataConnector] = [FixtureConnector()]
         else:
-            configured = {"yahoo": YahooFinanceConnector(settings.request_timeout_seconds)}
+            configured = {
+                "yahoo": YahooFinanceConnector(settings.request_timeout_seconds),
+                "ssi_fastconnect": SsiFastConnectConnector(settings),
+            }
             self.providers = [
                 configured[name.strip()]
                 for name in settings.market_provider_priority.split(",")
