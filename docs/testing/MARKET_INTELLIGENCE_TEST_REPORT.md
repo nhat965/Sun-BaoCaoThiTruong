@@ -13,13 +13,13 @@ scenario and frontend evidence. The detailed production-readiness table is in
   handling, history-depth denominators, index import provenance and replay idempotency.
 - Ruff passes for the backend source and tests.
 - Frontend lint and production build pass on the unchanged frontend surface.
-- Local pytest passed: 98 backend tests.
+- Local pytest passed: 119 backend tests.
 - Local Ruff passed for `app`, `tests` and `scripts`.
-- A temporary SQLite migration cycle (upgrade/downgrade/upgrade) passed at revision `0020`.
+- A temporary SQLite migration cycle (upgrade/downgrade/upgrade) passed at revision `0021`.
 - The labelled benchmark passed for 1,000 securities × 200 sessions (200,000 observations);
-  it took 226.33 ms on this host and performed zero database writes.
-- `pip-audit` reported no known vulnerabilities. The local npm production audit reported
-  zero vulnerabilities.
+  it took 207.85 ms on this host and performed zero database writes.
+- `pip-audit` is not installed in this environment. A previous local npm production audit
+  reported zero vulnerabilities; the latest advisory-endpoint request was unavailable.
 - PostgreSQL migration CI remains configured; no local PostgreSQL service is available on
   this host for a direct execution.
 

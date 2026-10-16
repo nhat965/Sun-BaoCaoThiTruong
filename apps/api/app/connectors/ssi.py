@@ -8,9 +8,12 @@ the API key, secret, or returned token.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -19,6 +22,13 @@ from app.connectors.base import ConnectorError, DataCapability, MarketDataConnec
 from app.database import SessionLocal
 from app.repositories import SecuritiesRepository
 from app.schemas import PriceBar, PriceSeries, Provenance, Security
+
+try:  # The official SDK is optional at import time so CSV/fixture workflows stay independent.
+    from ssi_fc_data import fc_md_client as _ssi_sdk_client
+    from ssi_fc_data import model as _ssi_sdk_model
+except ImportError:  # pragma: no cover - exercised in environments without the optional SDK
+    _ssi_sdk_client = None
+    _ssi_sdk_model = None
 
 
 class SsiFastConnectConnector(MarketDataConnector):
@@ -92,18 +102,155 @@ class SsiFastConnectConnector(MarketDataConnector):
 
     @staticmethod
     def _row_value(row: dict[str, Any], *names: str) -> Any:
+        normalized = {
+            str(key).replace("_", "").lower(): value for key, value in row.items()
+        }
         for name in names:
-            if name in row and row[name] is not None:
-                return row[name]
+            value = normalized.get(name.replace("_", "").lower())
+            if value is not None:
+                return value
         return None
+
+    @staticmethod
+    def _timestamp(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        raw = value.strip()
+        if raw.endswith("Z"):
+            raw = f"{raw[:-1]}+00:00"
+        try:
+            timestamp = datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                timestamp = datetime.strptime(raw, "%d/%m/%Y")
+            except ValueError:
+                return None
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return timestamp.astimezone(UTC)
+
+    def _sdk_config(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            auth_type="Bearer",
+            consumerID=self.settings.ssi_api_key or "",
+            consumerSecret=self.settings.ssi_api_secret or "",
+            url=self.settings.ssi_data_base_url.rstrip("/") + "/",
+            stream_url=self.settings.ssi_data_base_url.rstrip("/") + "/",
+        )
+
+    @classmethod
+    def _sdk_bars(cls, payload: Any) -> list[PriceBar]:
+        bars: list[PriceBar] = []
+        for row in cls._rows(payload):
+            timestamp = cls._timestamp(
+                cls._row_value(row, "tradingDate", "trading_date", "timestamp", "date")
+            )
+            values = [
+                cls._row_value(row, "openPrice", "open_price", "open"),
+                cls._row_value(row, "highPrice", "high_price", "high"),
+                cls._row_value(row, "lowPrice", "low_price", "low"),
+                cls._row_value(row, "closePrice", "close_price", "close"),
+            ]
+            volume = cls._row_value(row, "volume", "totalVolume", "total_volume")
+            if timestamp is None or any(value is None for value in values) or volume is None:
+                continue
+            try:
+                bars.append(
+                    PriceBar(
+                        timestamp=timestamp,
+                        open=float(values[0]),
+                        high=float(values[1]),
+                        low=float(values[2]),
+                        close=float(values[3]),
+                        volume=int(volume),
+                        actual_trading_value=(
+                            float(cls._row_value(row, "value", "tradingValue", "trading_value"))
+                            if cls._row_value(row, "value", "tradingValue", "trading_value")
+                            is not None
+                            else None
+                        ),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        return bars
+
+    async def _sdk_prices(self, symbol: str, limit: int) -> PriceSeries:
+        if not self.settings.ssi_api_key or not self.settings.ssi_api_secret:
+            raise ConnectorError(
+                "BLOCKED: SSI_API_KEY/SSI_API_SECRET are not configured for the official SDK."
+            )
+        if _ssi_sdk_client is None or _ssi_sdk_model is None:
+            raise ConnectorError(
+                "BLOCKED: install the official ssi-fc-data package before enabling SSI."
+            )
+        security = self._resolve(symbol)
+        provider_symbol = security.provider_ids.get(self.provider_id) or security.symbol
+        page_size = min(max(limit, 1), 100)
+        from_date = (date.today() - timedelta(days=365 * 5)).strftime("%d/%m/%Y")
+        to_date = date.today().strftime("%d/%m/%Y")
+
+        def fetch() -> list[PriceBar]:
+            config = self._sdk_config()
+            client = _ssi_sdk_client.MarketDataClient(config)
+            collected: list[PriceBar] = []
+            for page in range(1, 7):
+                payload = client.daily_ohlc(
+                    config,
+                    _ssi_sdk_model.daily_ohlc(
+                        provider_symbol,
+                        from_date,
+                        to_date,
+                        page,
+                        page_size,
+                        True,
+                    ),
+                )
+                page_bars = self._sdk_bars(payload)
+                if not page_bars:
+                    break
+                collected.extend(page_bars)
+                if len(page_bars) < page_size or len(collected) >= limit:
+                    break
+            return sorted(collected, key=lambda item: item.timestamp)[-max(1, min(limit, 520)) :]
+
+        try:
+            bars = await asyncio.to_thread(fetch)
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            # Do not expose SDK response bodies or credentials in API errors/logs.
+            raise ConnectorError("SSI official SDK DailyOhlc request failed.") from exc
+        if not bars:
+            raise ConnectorError("SSI official SDK DailyOhlc returned no valid observations.")
+        retrieved_at = datetime.now(UTC)
+        return PriceSeries(
+            security=security,
+            interval="1d",
+            adjusted=False,
+            bars=bars,
+            provenance=Provenance(
+                source=self.name,
+                provider_id=self.provider_id,
+                source_url=self.settings.ssi_data_base_url.rstrip("/") + "/api/v2/Market/DailyOhlc",
+                provider_symbol=provider_symbol,
+                retrieved_at=retrieved_at,
+                market_timestamp=bars[-1].timestamp,
+                mode="live",
+                delayed=True,
+                validation_status="partial",
+                adjustment_policy="unadjusted; provider contract must define adjustments",
+                coverage="security",
+                freshness="daily/delayed",
+                last_updated=retrieved_at,
+                notes="Official SSI FastConnect Python SDK 2.x; entitlement must be verified.",
+            ),
+        )
 
     async def prices(self, symbol: str, limit: int = 260) -> PriceSeries:
         template = self.settings.ssi_ohlc_endpoint_template
         if not template:
-            raise ConnectorError(
-                "BLOCKED: configure SSI_OHLC_ENDPOINT_TEMPLATE from an approved SSI contract; "
-                "the application will not guess an endpoint."
-            )
+            return await self._sdk_prices(symbol, limit)
         security = self._resolve(symbol)
         provider_symbol = security.provider_ids.get(self.provider_id) or security.symbol
         try:
@@ -127,14 +274,10 @@ class SsiFastConnectConnector(MarketDataConnector):
         bars: list[PriceBar] = []
         for row in self._rows(payload):
             raw_timestamp = self._row_value(row, "tradingDate", "trading_date", "timestamp", "date")
-            if not isinstance(raw_timestamp, str):
+            timestamp = self._timestamp(raw_timestamp)
+            if timestamp is None:
                 continue
             try:
-                if raw_timestamp.endswith("Z"):
-                    raw_timestamp = f"{raw_timestamp[:-1]}+00:00"
-                timestamp = datetime.fromisoformat(raw_timestamp)
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=UTC)
                 values = [
                     self._row_value(row, "openPrice", "open_price", "open"),
                     self._row_value(row, "highPrice", "high_price", "high"),
@@ -146,7 +289,7 @@ class SsiFastConnectConnector(MarketDataConnector):
                     continue
                 bars.append(
                     PriceBar(
-                        timestamp=timestamp.astimezone(UTC),
+                        timestamp=timestamp,
                         open=float(values[0]),
                         high=float(values[1]),
                         low=float(values[2]),
@@ -188,6 +331,162 @@ class SsiFastConnectConnector(MarketDataConnector):
         )
 
     async def market_indices(self):
-        raise ConnectorError(
-            "BLOCKED: SSI index endpoint is not configured from an approved contract."
-        )
+        if not self.settings.ssi_api_key or not self.settings.ssi_api_secret:
+            raise ConnectorError(
+                "BLOCKED: SSI_API_KEY/SSI_API_SECRET are not configured for the official SDK."
+            )
+        if _ssi_sdk_client is None or _ssi_sdk_model is None:
+            raise ConnectorError(
+                "BLOCKED: install the official ssi-fc-data package before enabling SSI indexes."
+            )
+        from_date = (date.today() - timedelta(days=365 * 5)).strftime("%d/%m/%Y")
+        to_date = date.today().strftime("%d/%m/%Y")
+        index_ids = ("VNINDEX", "VN30", "HNX", "UPCOM")
+
+        def fetch() -> list[dict[str, Any]]:
+            config = self._sdk_config()
+            client = _ssi_sdk_client.MarketDataClient(config)
+            result: list[dict[str, Any]] = []
+            for index_id in index_ids:
+                payload = client.daily_index(
+                    config,
+                    _ssi_sdk_model.daily_index(
+                        "market-intelligence",
+                        index_id,
+                        from_date,
+                        to_date,
+                        1,
+                        100,
+                        "",
+                        "",
+                    ),
+                )
+                name, exchange = {
+                    "VNINDEX": ("VN-Index", "HOSE"),
+                    "VN30": ("VN30", "HOSE"),
+                    "HNX": ("HNX-Index", "HNX"),
+                    "UPCOM": ("UPCoM-Index", "UPCOM"),
+                }[index_id]
+                for row in self._rows(payload):
+                    timestamp = self._timestamp(
+                        self._row_value(row, "tradingDate", "indexDate", "date", "timestamp")
+                    )
+                    close = self._row_value(
+                        row, "indexValue", "closeIndex", "close", "indexClose"
+                    )
+                    previous_close = self._row_value(
+                        row, "previousClose", "prevClose", "previousIndex"
+                    )
+                    if timestamp is None or close is None:
+                        continue
+                    try:
+                        result.append(
+                            {
+                                "symbol": index_id,
+                                "name": name,
+                                "exchange": exchange,
+                                "market_session_date": timestamp.astimezone(
+                                    ZoneInfo(self.settings.market_timezone)
+                                ).date(),
+                                "market_timestamp": timestamp,
+                                "close": float(close),
+                                "previous_close": (
+                                    float(previous_close)
+                                    if previous_close is not None
+                                    else None
+                                ),
+                            }
+                        )
+                    except (TypeError, ValueError):
+                        continue
+            return result
+
+        try:
+            rows = await asyncio.to_thread(fetch)
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            raise ConnectorError("SSI official SDK DailyIndex request failed.") from exc
+        if not rows:
+            raise ConnectorError("SSI official SDK DailyIndex returned no valid observations.")
+        retrieved_at = datetime.now(UTC)
+        source_url = self.settings.ssi_data_base_url.rstrip("/") + "/api/v2/Market/DailyIndex"
+        for row in rows:
+            row.update(
+                {
+                    "provider": self.name,
+                    "provider_id": self.provider_id,
+                    "source_url": source_url,
+                    "retrieved_at": retrieved_at,
+                    "last_updated": retrieved_at,
+                    "data_mode": "live",
+                    "validation_status": "partial",
+                    "coverage": "index",
+                    "freshness": "daily/delayed",
+                    "adjustment_policy": "unadjusted; provider contract must define adjustments",
+                }
+            )
+        return rows
+
+    async def securities_metadata(self, markets: tuple[str, ...] = ("HOSE", "HNX", "UPCOM")):
+        if not self.settings.ssi_api_key or not self.settings.ssi_api_secret:
+            raise ConnectorError(
+                "BLOCKED: SSI_API_KEY/SSI_API_SECRET are not configured for the official SDK."
+            )
+        if _ssi_sdk_client is None or _ssi_sdk_model is None:
+            raise ConnectorError(
+                "BLOCKED: install the official ssi-fc-data package before syncing securities."
+            )
+
+        def fetch() -> list[dict[str, Any]]:
+            config = self._sdk_config()
+            client = _ssi_sdk_client.MarketDataClient(config)
+            collected: list[dict[str, Any]] = []
+            for market in markets:
+                for page in range(1, 21):
+                    payload = client.securities(
+                        config,
+                        _ssi_sdk_model.securities(market, page, 100),
+                    )
+                    rows = self._rows(payload)
+                    if not rows:
+                        break
+                    collected.extend(rows)
+                    if len(rows) < 100:
+                        break
+            return collected
+
+        try:
+            rows = await asyncio.to_thread(fetch)
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            raise ConnectorError("SSI official SDK Securities request failed.") from exc
+        retrieved_at = datetime.now(UTC)
+        securities: list[Security] = []
+        for row in rows:
+            symbol = self._row_value(row, "symbol", "stockCode", "stock_code", "code")
+            name = self._row_value(row, "stockName", "stock_name", "companyName", "name")
+            exchange = self._row_value(row, "market", "exchange", "exchangeName")
+            if not all(isinstance(value, str) and value.strip() for value in (symbol, name, exchange)):
+                continue
+            exchange_value = exchange.strip().upper()
+            if exchange_value not in {"HOSE", "HNX", "UPCOM"}:
+                continue
+            securities.append(
+                Security(
+                    symbol=symbol.strip().upper(),
+                    name=name.strip(),
+                    exchange=exchange_value,
+                    aliases=[],
+                    listing_status="active",
+                    security_type="stock",
+                    provider_ids={self.provider_id: symbol.strip().upper()},
+                    source_name=self.name,
+                    source_url=self.settings.ssi_data_base_url.rstrip("/") + "/api/v2/Market/Securities",
+                    last_updated=retrieved_at,
+                )
+            )
+        if not securities:
+            raise ConnectorError("SSI official SDK Securities returned no usable rows.")
+        return securities

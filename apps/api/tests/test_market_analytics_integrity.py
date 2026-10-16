@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
@@ -8,14 +9,20 @@ os.environ["MARKET_DATA_MODE"] = "fixture"
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app.config import Settings
+from app.connectors.base import ConnectorError
+from app.connectors.fixture import FixtureConnector
 from app.database import MarketRiskSignalRecord, MarketScenarioSnapshotRecord, SessionLocal, init_db
 from app.freshness import assess_freshness
 from app.main import _freshness_label, app
 from app.market_trend import _aligned_index_change, _aligned_index_change_detail, _freshness
+from app.registry import seed_registry_if_empty
+from app.repositories import PriceRepository
 from app.sector_liquidity import (
     _aggregate_relative_volume,
     _relative_volume,
 )
+from app.services import AnalysisService
 
 
 def _price_rows(count: int, *, start: datetime | None = None) -> list[SimpleNamespace]:
@@ -137,3 +144,28 @@ def test_risk_and_scenario_replays_are_idempotent():
     with SessionLocal() as session:
         assert session.scalar(select(func.count(MarketRiskSignalRecord.id))) == len(first_risks.json()["signals"])
         assert session.scalar(select(func.count(MarketScenarioSnapshotRecord.id))) == 3
+
+
+def test_analysis_uses_persisted_ohlcv_when_upstream_is_unavailable(monkeypatch):
+    init_db()
+    seed_registry_if_empty()
+    series = asyncio.run(FixtureConnector().prices("HPG", limit=35))
+    with SessionLocal() as session:
+        PriceRepository(session).upsert_series(series)
+        session.commit()
+
+    service = AnalysisService(
+        Settings(database_url="sqlite:///:memory:", market_data_mode="fixture", news_feeds="")
+    )
+
+    async def unavailable(*args, **kwargs):
+        raise ConnectorError("provider unavailable")
+
+    monkeypatch.setattr(service.manager, "prices", unavailable)
+    result = asyncio.run(service.analyze("HPG"))
+
+    assert result.latest_price == result.prices.bars[-1].close
+    assert result.prices.provenance.freshness == "historical"
+    assert result.prices.provenance.delayed is True
+    assert "persisted observations" in (result.prices.provenance.notes or "")
+    assert any("không phải dữ liệu realtime" in item for item in result.limitations)

@@ -57,3 +57,6 @@ class MarketDataConnector(ABC):
 
     async def market_indices(self):
         raise UnsupportedCapabilityError(f"{self.name} does not provide market indices")
+
+    async def securities_metadata(self):
+        raise UnsupportedCapabilityError(f"{self.name} does not provide securities metadata")

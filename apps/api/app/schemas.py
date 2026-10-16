@@ -11,7 +11,7 @@ class Provenance(BaseModel):
     provider_symbol: str
     retrieved_at: datetime
     market_timestamp: datetime | None = None
-    mode: Literal["live", "fixture", "authorized"]
+    mode: Literal["live", "fixture", "authorized", "unknown"]
     delayed: bool = True
     validation_status: Literal["valid", "partial", "invalid"] = "valid"
     adjustment_policy: str = "unadjusted"
@@ -139,6 +139,51 @@ class ProviderCapabilityStatus(BaseModel):
     last_checked_at: datetime | None = None
     test_result: str
     cost_and_limits: str
+
+
+class VnstockFreeOperation(BaseModel):
+    operation: str
+    group: str
+    description: str
+    tier: str
+    requires_symbol: bool = False
+    status: Literal["available", "blocked_without_entitlement"]
+
+
+class VnstockFreeSource(BaseModel):
+    source: str
+    provider: str
+    supported_groups: list[str] = Field(default_factory=list)
+    authentication: str
+    entitlement: str
+    notes: str | None = None
+
+
+class VnstockFreeCatalog(BaseModel):
+    provider_id: str = "vnstock"
+    sdk: str = "vnstock-v5"
+    generated_at: datetime
+    operations: list[VnstockFreeOperation]
+    sources: list[VnstockFreeSource] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class VnstockFreeResponse(BaseModel):
+    status: Literal["SUCCESS", "BLOCKED", "FAILED"]
+    operation: str
+    group: str | None = None
+    symbol: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list)
+    row_count: int = 0
+    source: str | None = None
+    route: str | None = None
+    retrieved_at: datetime | None = None
+    entitlement_tier: str | None = None
+    tier_required: str | None = None
+    error_code: str | None = None
+    message: str | None = None
+    provenance: dict = Field(default_factory=dict)
 
 
 class DataSyncRun(BaseModel):
@@ -441,7 +486,7 @@ class FinancialStatementPeriod(BaseModel):
 
 class FinancialStatementsResponse(BaseModel):
     symbol: str
-    automatic_sync_status: Literal["available", "blocked"]
+    automatic_sync_status: Literal["available", "live", "blocked"]
     automatic_sync_message: str
     periods: list[FinancialStatementPeriod]
 
@@ -631,6 +676,20 @@ class JobResult(BaseModel):
     attempts: int
     last_error: str | None = None
     next_attempt_at: datetime | None = None
+    provider: str | None = None
+    scope: str | None = None
+    requested_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_code: str | None = None
+    inserted_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
+    error_count: int = 0
+    cursor_from: datetime | None = None
+    cursor_to: datetime | None = None
+    source_freshness: str | None = None
+    idempotency_key: str | None = None
 
 
 class MarketIndexObservation(BaseModel):

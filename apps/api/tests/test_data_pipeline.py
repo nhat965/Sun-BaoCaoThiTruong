@@ -8,6 +8,8 @@ from sqlalchemy import delete, func, select
 
 from app.auth import admin_rate_limiter
 from app.config import Settings, get_settings
+from app.connectors.base import DataCapability
+from app.data_pipeline import DataSyncService
 from app.database import PriceObservation, SecurityRecord, SessionLocal
 from app.main import app
 
@@ -24,6 +26,17 @@ def _settings() -> Settings:
 
 def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+
+
+def test_explicit_ssi_backfill_does_not_depend_on_local_provider_priority():
+    service = DataSyncService(
+        Settings(
+            market_data_mode="live",
+            market_provider_priority="yahoo",
+        )
+    )
+    provider = service._provider("ssi_fastconnect", DataCapability.SECURITIES_METADATA)
+    assert provider.provider_id == "ssi_fastconnect"
 
 
 def test_provider_catalog_separates_documented_and_enabled_capabilities():

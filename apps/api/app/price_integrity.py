@@ -10,6 +10,7 @@ from app.database import PriceObservation
 
 SOURCE_PROVIDER_IDS = {
     "Yahoo Finance chart": "yahoo",
+    "Vnstock v5": "vnstock",
     "Synthetic fixture (development only)": "fixture",
 }
 

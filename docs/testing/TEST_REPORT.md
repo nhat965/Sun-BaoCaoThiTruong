@@ -1,24 +1,28 @@
-# Test report — V4.1 Task 02
+# Test report — V4.1 PR-F release acceptance
 
-Date: 2026-10-14 (Asia/Bangkok)
+Date: 2026-10-15 (Asia/Bangkok)
 
 ## Automated checks
 
 | Check | Result |
 |---|---|
 | Backend `ruff check .` | PASS |
-| Backend `pytest -q` | PASS — 101 tests |
+| Backend `pytest -q` | PASS — 119 tests |
 | Frontend `npm run lint` | PASS |
 | Frontend `npm run build` | PASS — Next.js production build |
-| Clean Alembic upgrade/downgrade/re-upgrade to `0020` | PASS — temporary SQLite database |
+| Clean Alembic upgrade/downgrade/re-upgrade to `0021` | PASS — temporary SQLite database |
 | CI PostgreSQL migration gate | CONFIGURED — PostgreSQL 16 service, full upgrade/downgrade/re-upgrade |
-| Dependency audit | PASS — `pip-audit` no known vulnerabilities; production `npm audit` 0 vulnerabilities |
-| Market analytics benchmark | PASS — labelled in-process fixture, 1,000 symbols × 200 sessions, 197.82 ms, no writes; PostgreSQL benchmark added to CI |
+| Dependency audit | PARTIAL — a previous production `npm audit --omit=dev --audit-level=high` returned 0 vulnerabilities; the latest rerun could not reach the npm advisory endpoint, and `pip-audit` is not installed in this environment |
+| Market analytics benchmark | PASS — labelled in-process fixture, 1,000 symbols × 200 sessions, 207.85 ms, no writes; PostgreSQL benchmark added to CI |
 | Responsive browser smoke (desktop + 390×844) | PASS — no horizontal overflow or console errors |
 | Impeccable UI detector | PASS — one side-border warning found and removed in the changed frontend targets |
 | Legacy database adoption | PASS — schema verified and stamped without deleting data |
+| PR-F fixture release acceptance | PASS — registry, fixture sync/replay, coverage and admin auth |
+| Task 05 capability/reconciliation acceptance | PASS — capability status matrix, explicit external-baseline blocker, API and CLI report |
+| PostgreSQL lease acceptance | CI gate — two concurrent claimers must yield exactly one owner |
+| Docker Compose graph | CI gate — `docker compose config --quiet`; runtime remains target-host dependent |
 
-Backend coverage additionally exercises authorized XLSX registry ingestion, in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
+Backend coverage additionally exercises authorized XLSX registry ingestion as a standalone importer (including schema initialization), in-file duplicate rejection, provider IDs, corporate-action imports, idempotent price-quality flags and expanded exchange/history coverage diagnostics. Analyst and automation production integrations remain credential/infrastructure dependent. One upstream Starlette warning recommends migrating from the deprecated TestClient/httpx integration when compatible versions are available.
 
 The latest CI PostgreSQL fixture benchmark (1,000 × 200, 3 runs) measured P50/P95
 of 732.134/733.884 ms for canonical selection, 254.619/256.252 ms for breadth,
@@ -31,6 +35,16 @@ Task 02 regressions additionally verify explicit provider capability gates, init
 incremental price sync, persisted run/error counts, financial unit conversion, retention
 of raw value/unit, refusal to overwrite verified BCTC with unverified input, normalized
 statement reads and a persisted `BLOCKED` result when automatic BCTC access is unavailable.
+
+Task 05 adds a read-only capability matrix and reconciliation report. The current local
+database contains the 13-row bootstrap securities file; no SSI/FiinGroup credential or
+redistribution entitlement was supplied, so live full-market acquisition remains
+`BLOCKED_EXTERNAL_DEPENDENCY`. Fixture/import paths are reported separately and are not
+promoted to live verification.
+
+The official SSI SDK boundary is covered by mocked DailyOhlc, securities-master and
+DailyIndex response tests. No real SSI request was made in this environment because
+credentials, account approval and redistribution rights were not supplied.
 
 Task 01 browser QA verified the default 13-row registry without a query, unaccented
 `Hoa Phat` search returning HPG, HOSE and sector filters, symbol sorting, five-row
@@ -67,7 +81,7 @@ This proves connectivity at that moment only. It does not establish market-data 
 - FireAnt market data: no access token/scopes/entitlements supplied.
 - Live financial statements: no provider credential or redistribution agreement supplied; the tested path is authorized CSV only.
 - VPS portfolio data: no supported official integration supplied.
-- Docker Compose: Docker engine unavailable.
+- Docker Compose runtime: Docker engine unavailable on this workstation; CI validates the Compose graph, target-host smoke remains required.
 - Local PostgreSQL benchmark: blocked because no service was listening on `localhost:5432`; the CI PostgreSQL service runs the isolated benchmark.
 - Production load, penetration testing, accessibility screen-reader audit and cross-browser matrix.
 - GitHub Actions and Docker Compose runtime were not executed locally because Docker/network infrastructure is unavailable here. The workflow now enforces PostgreSQL migrations and dependency audits on every pull request and push to `main`.

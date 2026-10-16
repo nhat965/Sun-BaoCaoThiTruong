@@ -7,6 +7,7 @@ from app.config import Settings
 from app.connectors.base import ConnectorError, MarketDataConnector
 from app.connectors.fixture import FixtureConnector
 from app.connectors.ssi import SsiFastConnectConnector
+from app.connectors.vnstock import VnstockConnector
 from app.connectors.yahoo import YahooFinanceConnector
 from app.database import SessionLocal
 from app.repositories import SourceHealthRepository
@@ -106,6 +107,7 @@ class ConnectorManager:
             self.providers: list[MarketDataConnector] = [FixtureConnector()]
         else:
             configured = {
+                "vnstock": VnstockConnector(settings),
                 "yahoo": YahooFinanceConnector(settings.request_timeout_seconds),
                 "ssi_fastconnect": SsiFastConnectConnector(settings),
             }

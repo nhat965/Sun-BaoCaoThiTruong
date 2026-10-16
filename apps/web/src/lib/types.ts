@@ -175,7 +175,7 @@ export interface FinancialStatementPeriod {
 
 export interface FinancialStatementsResponse {
   symbol: string;
-  automatic_sync_status: "available" | "blocked";
+  automatic_sync_status: "available" | "live" | "blocked";
   automatic_sync_message: string;
   periods: FinancialStatementPeriod[];
 }

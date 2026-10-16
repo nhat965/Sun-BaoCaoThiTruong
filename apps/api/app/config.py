@@ -11,16 +11,22 @@ class Settings(BaseSettings):
     market_data_mode: str = "live"
     web_origin: str = "http://localhost:3000"
     request_timeout_seconds: float = 12
-    market_provider_priority: str = "yahoo"
+    market_provider_priority: str = "vnstock,ssi_fastconnect,yahoo"
     fireant_base_url: str = "https://api.fireant.vn"
     fireant_access_token: str | None = None
     ssi_base_url: str = "https://api.ssi.com.vn"
+    # Official SSI FastConnect Data host used by the published Python SDK.
+    ssi_data_base_url: str = "https://fc-data.ssi.com.vn/"
     ssi_auth_url: str = "https://api.ssi.com.vn/api/v3/auth/token"
     ssi_environment: str = "production"
     ssi_api_key: str | None = None
     ssi_api_secret: str | None = None
     # Must be copied from an approved SSI contract; there is intentionally no default.
     ssi_ohlc_endpoint_template: str | None = None
+    # Vnstock is an optional client over an entitled upstream source. Keep the
+    # selected route explicit so fallback responses are never mislabeled.
+    vnstock_market_source: str = "vci"
+    vnstock_reference_source: str = "vci"
     fiingroup_base_url: str | None = None
     fiingroup_api_key: str | None = None
     fiingroup_financial_endpoint_template: str | None = None
@@ -47,6 +53,13 @@ class Settings(BaseSettings):
     automation_max_retries: int = 3
     automation_lease_seconds: int = 1800
     market_timezone: str = "Asia/Ho_Chi_Minh"
+    # Scheduler is opt-in. The standalone worker reads these values; FastAPI never
+    # starts a background loop implicitly.
+    scheduler_enabled: bool = False
+    scheduler_poll_interval_seconds: int = 30
+    scheduler_daily_times: str = "16:30"
+    scheduler_max_concurrency: int = 1
+    scheduler_batch_limit: int = 50
     max_request_bytes: int = 5_000_000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

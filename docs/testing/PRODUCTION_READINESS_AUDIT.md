@@ -16,7 +16,7 @@ second time. A closed PR with `mergedAt=null` is expected in this situation.
 | Module | Current evidence | Status | Limitation |
 |---|---:|---|---|
 | Securities registry | 13 active symbols: HOSE 7, HNX 3, UPCoM 3 | PARTIAL | Bootstrap registry, not full-market universe |
-| OHLCV | 1,302 persisted observations; 5/13 symbols have history | PARTIAL | Yahoo chart is a development connector and delayed |
+| OHLCV | 1,305 persisted observations; 5/13 symbols have history | PARTIAL | Yahoo chart is a development connector and delayed |
 | VN-Index / VN30 / HNX-Index / UPCoM-Index | 0/4 stored | BLOCKED | No authorized index feed configured |
 | Market cap | 0 symbols | BLOCKED | No provider field available in the active source |
 | Actual trading value | 0 current observations | BLOCKED | Volume is not substituted for value |
@@ -31,6 +31,11 @@ reported as `fresh`, `stale`, `delayed`, `historical`, `fixture`, `unconfirmed` 
 `unknown`; without an official exchange calendar a recent weekday is only a
 `weekday_candidate`, not proof of realtime data. Fixture data is only enabled by
 `MARKET_DATA_MODE=fixture` and is labelled as synthetic.
+
+Task 05 adds `/api/v1/data-platform/capabilities` and
+`/api/v1/data-quality/reconciliation`. A fresh local snapshot on 2026-10-15
+reported 13 securities and 1,305 OHLCV rows; the endpoint is the source of truth
+for changing counts, while the table above preserves the PR #17 audit snapshot.
 
 ## Reproduced issues and fixes
 
@@ -66,7 +71,7 @@ python scripts/benchmark_market_analytics_postgres.py --database-url "$BENCHMARK
 
 The benchmark uses a labelled synthetic fixture with 1,000 securities and 200
 sessions per security, performs RVOL/return/MA calculations and writes nothing to
-the database. The latest run processed 200,000 observations in 197.82 ms. Its
+the database. The latest local run processed 200,000 observations in 207.85 ms. Its
 output is evidence of local computational cost only, not market coverage or data
 quality.
 
@@ -108,6 +113,43 @@ npm audit --omit=dev --audit-level=high
 CI runs the same backend PostgreSQL migration cycle, tests, Ruff, the isolated
 PostgreSQL benchmark and dependency audit, plus the frontend lint/build and npm
 audit. Docker smoke remains dependent on a host with a Docker engine.
+
+## Follow-up acquisition hardening (2026-10-15)
+
+- PR #17–#21 remain a linear chain whose final local tip is `0173fc6`; the
+  working tree was not merged or pushed because it contains unrelated release
+  changes and GitHub CLI authentication is not valid in this environment.
+- The official `ssi-fc-data` SDK adapter now covers guarded securities metadata,
+  DailyOhlc and DailyIndex calls. Explicit SSI sync requests instantiate the
+  connector even when local provider priority still points at Yahoo; missing
+  credentials/package/entitlement returns `BLOCKED` without writing rows.
+- CSV/XLSX securities imports initialize the schema when called directly, so
+  they remain independent of SSI/commercial API availability. A targeted
+  importer run and the full backend suite pass.
+- Latest local checks: Ruff PASS, backend `123 passed`, frontend lint PASS,
+  frontend production build PASS, temporary SQLite Alembic upgrade → downgrade
+  → upgrade PASS through migration `0021`. A previous production npm audit
+  returned no vulnerabilities, but the latest rerun could not reach the npm
+  advisory endpoint. `pip-audit` is unavailable locally and must be installed or
+  run in CI before claiming a complete dependency audit.
+
+## Data coverage recovery audit (2026-10-15)
+
+The read-only audit in `docs/data/VNSTOCK_COVERAGE_RECOVERY_20261015.md` and
+`apps/api/scripts/vnstock_coverage.py` records 1,520 active stock symbols
+(HOSE 406, HNX 299, UPCoM 815), 52 symbols with 21,670 persisted Vnstock bars,
+and 1,468 symbols not yet backfilled. No symbol is labelled provider
+`unsupported` without an explicit attempt/error. The quality audit reports 3
+unverified ≥20% price-change warnings between adjacent sessions, zero verified corporate-action matches,
+and 789 calendar gaps that remain `UNCONFIRMED` without an authorised exchange
+calendar. No prices were modified.
+
+The acceptance SQLite database was also cleaned of two future-dated
+`acceptance-file` BCTC fixture periods accidentally left by pytest. The test now
+removes its own fixture rows in `finally`; current production financial-period
+coverage is zero. Vnstock Finance re-probe for HPG/FPT/SHB/SSI was blocked by a
+client-policy network error, so no live BCTC claim is made. PostgreSQL remains
+`BLOCKED` until a real PostgreSQL 16 service and `DATABASE_URL` are available.
 
 ## Roadmap
 

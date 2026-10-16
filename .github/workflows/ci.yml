@@ -54,6 +54,13 @@ jobs:
           alembic downgrade base
           alembic upgrade head
           alembic current
+      - name: PostgreSQL lease and idempotency acceptance
+        run: python scripts/verify_postgres_acceptance.py --database-url "$DATABASE_URL"
+      - name: Fixture end-to-end acceptance
+        env:
+          DATABASE_URL: sqlite:///:memory:
+          MARKET_DATA_MODE: fixture
+        run: pytest -q tests/test_release_acceptance.py tests/test_scheduler.py
       - name: Benchmark isolated PostgreSQL analytics fixture
         run: python scripts/benchmark_market_analytics_postgres.py --database-url "$DATABASE_URL" --runs 3
       - name: Audit Python dependencies
@@ -79,3 +86,11 @@ jobs:
         run: npm run build
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+  compose:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose graph
+        run: docker compose config --quiet

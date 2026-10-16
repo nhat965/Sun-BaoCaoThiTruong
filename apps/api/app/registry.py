@@ -8,7 +8,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
-from app.database import SessionLocal
+from app.database import SessionLocal, init_db
 from app.repositories import SecuritiesRepository
 from app.schemas import SecuritiesImportResult, Security
 
@@ -66,6 +66,11 @@ def parse_security(row: dict[str, str], default_source: str) -> Security:
 def import_security_rows(
     rows: Iterable[tuple[int, dict[str, str]]], source_name: str
 ) -> SecuritiesImportResult:
+    # Keep the file importer usable as a standalone operator utility as well as
+    # an HTTP dependency.  The API startup normally initializes the schema, but
+    # direct CSV/XLSX imports must not depend on request ordering or a prior app
+    # bootstrapping call.
+    init_db()
     inserted = updated = rejected = 0
     errors: list[str] = []
     seen: set[str] = set()

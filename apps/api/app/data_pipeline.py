@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from datetime import UTC, datetime
 
@@ -7,16 +8,25 @@ from app.config import Settings
 from app.connectors.base import ConnectorError, DataCapability, MarketDataConnector
 from app.connectors.financial import AuthorizedCsvFinancialProvider, FinancialProviderError
 from app.connectors.manager import ConnectorManager
+from app.connectors.ssi import SsiFastConnectConnector
+from app.connectors.vnstock import VnstockConnector
 from app.database import (
     DataSyncErrorRecord,
     DataSyncRunRecord,
+    MarketIndexObservationRecord,
     PriceObservation,
     SecurityRecord,
     SessionLocal,
     SourceHealthRecord,
 )
+from app.market_foundation import _same_index_value
 from app.normalization import normalize_price_series
-from app.repositories import FinancialRepository, PriceRepository, SourceHealthRepository
+from app.repositories import (
+    FinancialRepository,
+    PriceRepository,
+    SecuritiesRepository,
+    SourceHealthRepository,
+)
 from app.schemas import DataSyncRun, ProviderCapabilityStatus
 from app.secure_http import fetch_authorized_csv, validate_https_destination
 
@@ -78,7 +88,46 @@ def provider_catalog(settings: Settings) -> list[ProviderCapabilityStatus]:
     manual_success = success_time("authorized_file")
     fixture_success = success_time("fixture", "Synthetic fixture (development only)")
     market_fixture = settings.market_data_mode == "fixture"
+    ssi_sdk_ready = importlib.util.find_spec("ssi_fc_data") is not None
+    vnstock_ready = importlib.util.find_spec("vnstock") is not None
+    vnstock_success = success_time("vnstock", "Vnstock v5")
     return [
+        ProviderCapabilityStatus(
+            provider_id="vnstock",
+            name="Vnstock v5",
+            documentation_url="https://www.vnstocks.com/docs/vnstock/thi-truong-market",
+            documented_capabilities=[
+                DataCapability.SECURITIES_METADATA,
+                DataCapability.HISTORICAL_OHLCV,
+                DataCapability.MARKET_INDICES,
+            ],
+            enabled_capabilities=(
+                [
+                    DataCapability.SECURITIES_METADATA,
+                    DataCapability.HISTORICAL_OHLCV,
+                    DataCapability.MARKET_INDICES,
+                ]
+                if vnstock_ready and not market_fixture else []
+            ),
+            authentication="Vnstock registration and upstream source entitlement",
+            access_requirements=(
+                "Install Vnstock v5 and configure a permitted upstream source; "
+                "source-specific account/rights remain the operator's responsibility."
+            ),
+            licensing="Vnstock is a client library; upstream data terms and redistribution rights apply.",
+            availability=(
+                "available" if vnstock_success else "configured" if vnstock_ready and not market_fixture else "blocked"
+            ),
+            last_success_at=vnstock_success,
+            test_result=(
+                "Live Vnstock request succeeded."
+                if vnstock_success
+                else "Package import is ready; no successful Vnstock request has been persisted."
+                if vnstock_ready
+                else "BLOCKED: install optional Vnstock v5 before enabling this provider."
+            ),
+            cost_and_limits="Depends on the selected upstream source; no Vnstock entitlement is assumed.",
+        ),
         ProviderCapabilityStatus(
             provider_id="yahoo",
             name="Yahoo Finance chart",
@@ -176,7 +225,15 @@ def provider_catalog(settings: Settings) -> list[ProviderCapabilityStatus]:
                 DataCapability.HISTORICAL_OHLCV,
                 DataCapability.MARKET_INDICES,
             ],
-            enabled_capabilities=[],
+            enabled_capabilities=(
+                [
+                    DataCapability.SECURITIES_METADATA,
+                    DataCapability.HISTORICAL_OHLCV,
+                    DataCapability.MARKET_INDICES,
+                ]
+                if settings.ssi_api_key and settings.ssi_api_secret and ssi_sdk_ready
+                else []
+            ),
             authentication="API key + secret exchanged for Bearer JWT",
             access_requirements="SSI account, FastConnect registration and approval.",
             licensing="SSI service terms and redistribution permission apply.",
@@ -186,7 +243,11 @@ def provider_catalog(settings: Settings) -> list[ProviderCapabilityStatus]:
                 else "blocked"
             ),
             test_result=(
-                "Credentials configured; connector not enabled until an authenticated integration test passes."
+                (
+                    "Official SDK and credentials configured; authenticated integration test is still required."
+                    if ssi_sdk_ready
+                    else "Credentials configured but the official ssi-fc-data package is missing."
+                )
                 if settings.ssi_api_key and settings.ssi_api_secret
                 else "BLOCKED: SSI_API_KEY/SSI_API_SECRET are not configured."
             ),
@@ -232,17 +293,32 @@ class DataSyncService:
             destination_validator=validate_https_destination,
         )
 
-    def _provider(self, provider_id: str) -> MarketDataConnector:
+    def _provider(
+        self,
+        provider_id: str,
+        capability: DataCapability = DataCapability.HISTORICAL_OHLCV,
+    ) -> MarketDataConnector:
         candidates = [
             provider
             for provider in self.manager.providers
-            if provider.supports(DataCapability.HISTORICAL_OHLCV)
+            if provider.supports(capability)
         ]
         if provider_id != "auto":
             candidates = [provider for provider in candidates if provider.provider_id == provider_id]
+        # An explicit SSI request must not depend on the local provider priority
+        # setting.  This keeps admin backfills deterministic while preserving the
+        # normal priority chain for public price reads.
+        if not candidates and provider_id == "ssi_fastconnect":
+            candidate = SsiFastConnectConnector(self.settings)
+            if candidate.supports(capability):
+                candidates = [candidate]
+        if not candidates and provider_id == "vnstock":
+            candidate = VnstockConnector(self.settings)
+            if candidate.supports(capability):
+                candidates = [candidate]
         if not candidates:
             raise ValueError(
-                f"Provider {provider_id} không được bật cho capability historical_ohlcv."
+                f"Provider {provider_id} không được bật cho capability {capability}."
             )
         return candidates[0]
 
@@ -250,7 +326,7 @@ class DataSyncService:
     def _start(
         provider: str,
         capability: DataCapability,
-        symbol: str,
+        symbol: str | None,
         sync_mode: str,
         cursor_from: datetime | None,
     ) -> int:
@@ -388,6 +464,160 @@ class DataSyncService:
                 )
                 SourceHealthRepository(session).record(
                     provider.name, status="unavailable", message=str(exc)[:512]
+                )
+                session.commit()
+            raise ConnectorError(str(exc)) from exc
+
+    async def sync_securities(
+        self,
+        *,
+        provider_id: str = "vnstock",
+        markets: tuple[str, ...] = ("HOSE", "HNX", "UPCOM"),
+    ) -> DataSyncRun:
+        """Backfill the securities master from an authorized provider.
+
+        The provider owns the source and entitlement check.  CSV/XLSX importers
+        remain independent and are not routed through this method.
+        """
+        provider = self._provider(provider_id, DataCapability.SECURITIES_METADATA)
+        run_id = self._start(
+            provider.provider_id,
+            DataCapability.SECURITIES_METADATA,
+            None,
+            "initial",
+            None,
+        )
+        try:
+            securities = await provider.securities_metadata(markets)
+            inserted = updated = 0
+            with SessionLocal() as session:
+                repository = SecuritiesRepository(session)
+                for security in securities:
+                    _, was_inserted = repository.upsert(security)
+                    inserted += int(was_inserted)
+                    updated += int(not was_inserted)
+                row = session.get(DataSyncRunRecord, run_id)
+                row.status = "SUCCESS"
+                row.finished_at = datetime.now(UTC)
+                row.inserted_count = inserted
+                row.updated_count = updated
+                row.details_json = json.dumps(
+                    {
+                        "markets": list(markets),
+                        "records": len(securities),
+                        "source_mode": "live",
+                    }
+                )
+                SourceHealthRepository(session).record(
+                    provider.name,
+                    status="available",
+                    message="securities metadata sync succeeded",
+                )
+                session.commit()
+                session.refresh(row)
+                return sync_run_schema(row)
+        except (ConnectorError, ValueError) as exc:
+            with SessionLocal() as session:
+                row = session.get(DataSyncRunRecord, run_id)
+                row.status = "BLOCKED" if str(exc).startswith("BLOCKED") else "FAILED"
+                row.finished_at = datetime.now(UTC)
+                row.error_count = 1
+                row.error_message = str(exc)[:1024]
+                session.add(
+                    DataSyncErrorRecord(
+                        run_id=run_id,
+                        symbol=None,
+                        error_code="provider_error",
+                        message=str(exc)[:1024],
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                SourceHealthRepository(session).record(
+                    provider.name,
+                    status="unavailable",
+                    message=str(exc)[:512],
+                )
+                session.commit()
+            raise ConnectorError(str(exc)) from exc
+
+    async def sync_indices(self, *, provider_id: str = "vnstock") -> DataSyncRun:
+        """Backfill official index observations without deriving an index from stocks."""
+        provider = self._provider(provider_id, DataCapability.MARKET_INDICES)
+        run_id = self._start(
+            provider.provider_id,
+            DataCapability.MARKET_INDICES,
+            None,
+            "initial",
+            None,
+        )
+        try:
+            observations = await provider.market_indices()
+            inserted = updated = skipped = 0
+            with SessionLocal() as session:
+                for observation in observations:
+                    existing = session.scalar(
+                        select(MarketIndexObservationRecord).where(
+                            MarketIndexObservationRecord.symbol == observation["symbol"],
+                            MarketIndexObservationRecord.provider_id
+                            == observation["provider_id"],
+                            MarketIndexObservationRecord.market_session_date
+                            == observation["market_session_date"],
+                        )
+                    )
+                    values = {
+                        **observation,
+                        "close": observation["close"],
+                    }
+                    if existing is None:
+                        session.add(MarketIndexObservationRecord(**values))
+                        inserted += 1
+                    elif all(
+                        _same_index_value(getattr(existing, key), value)
+                        for key, value in values.items()
+                        if key not in {"last_updated"}
+                    ):
+                        skipped += 1
+                    else:
+                        for key, value in values.items():
+                            setattr(existing, key, value)
+                        updated += 1
+                row = session.get(DataSyncRunRecord, run_id)
+                row.status = "SUCCESS"
+                row.finished_at = datetime.now(UTC)
+                row.inserted_count = inserted
+                row.updated_count = updated
+                row.skipped_count = skipped
+                row.details_json = json.dumps(
+                    {"records": len(observations), "source_mode": "live"}
+                )
+                SourceHealthRepository(session).record(
+                    provider.name,
+                    status="available",
+                    message="market index sync succeeded",
+                )
+                session.commit()
+                session.refresh(row)
+                return sync_run_schema(row)
+        except (ConnectorError, ValueError, TypeError) as exc:
+            with SessionLocal() as session:
+                row = session.get(DataSyncRunRecord, run_id)
+                row.status = "BLOCKED" if str(exc).startswith("BLOCKED") else "FAILED"
+                row.finished_at = datetime.now(UTC)
+                row.error_count = 1
+                row.error_message = str(exc)[:1024]
+                session.add(
+                    DataSyncErrorRecord(
+                        run_id=run_id,
+                        symbol=None,
+                        error_code="provider_error",
+                        message=str(exc)[:1024],
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                SourceHealthRepository(session).record(
+                    provider.name,
+                    status="unavailable",
+                    message=str(exc)[:512],
                 )
                 session.commit()
             raise ConnectorError(str(exc)) from exc

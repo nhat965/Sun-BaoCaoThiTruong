@@ -27,6 +27,18 @@ services:
       timeout: 3s
       retries: 10
       start_period: 15s
+  worker:
+    build: ./apps/api
+    command: ["python", "scripts/run_scheduler.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://market:market_dev_only@db:5432/market_intelligence
+      MARKET_DATA_MODE: live
+      SCHEDULER_ENABLED: "true"
+      SCHEDULER_DAILY_TIMES: "16:30"
+      SCHEDULER_MAX_CONCURRENCY: "1"
+      SCHEDULER_BATCH_LIMIT: "50"
+    depends_on:
+      api: {condition: service_healthy}
   web:
     build: ./apps/web
     environment:

@@ -7,6 +7,7 @@
 | Nguồn | Trạng thái | Ghi chú |
 |---|---|---|
 | Yahoo Finance chart API | Development connector, delayed | Không cần khóa; có thể truy xuất OHLCV khi upstream đáp ứng, nhưng chưa xác minh quyền phân phối thương mại và không phải realtime production. Mã HOSE dùng hậu tố `.VN`. |
+| Vnstock v5 | Live verified, delayed, Community-limited | Đã kiểm thử route `vci`, danh mục 1.520 mã và backfill OHLCV theo batch; chưa phải realtime/full-market và quyền upstream phải được xác minh. Xem [`docs/integrations/VNSTOCK.md`](docs/integrations/VNSTOCK.md) và [`docs/data/VNSTOCK_FULL_MARKET_BACKFILL.md`](docs/data/VNSTOCK_FULL_MARKET_BACKFILL.md). |
 | Configurable RSS feeds | Configured metadata, unverified | Chỉ dùng metadata, URL và tiêu đề; không sao chép toàn văn. Mặc định VnExpress, nguồn khác cấu hình qua `NEWS_FEEDS`; chưa tính là live nếu chưa có lần truy xuất thành công được ghi nhận. |
 | FireAnt | Theo dõi trạng thái; bị chặn khi thiếu token | Chỉ gọi `/monitoring/status` khi có token. Chưa tuyên bố dữ liệu nào là live khi chưa xác minh scope/entitlement. |
 | SSI FastConnect | BLOCKED | Tài liệu chính thức đã khảo sát; cần tài khoản, API key/secret và lần kiểm thử được cấp quyền. |
@@ -24,6 +25,26 @@ docker compose up --build
 ```
 
 Mở `http://localhost:3000`. API docs ở `http://localhost:8000/docs`.
+
+Worker scheduler chạy tách khỏi FastAPI. Mặc định worker bị tắt để tránh chạy nhầm trong
+môi trường phát triển; bật bằng `SCHEDULER_ENABLED=true` sau khi cấu hình nguồn được cấp
+quyền. Chạy kiểm tra một vòng có chủ đích bằng `cd apps/api && python scripts/run_scheduler.py --once`.
+Coverage database có tại `GET /api/v1/data-quality/coverage`; trang vận hành quản trị là
+`/admin` và chỉ giữ admin token trong bộ nhớ phiên, không lưu vào localStorage. Acceptance
+release và PostgreSQL lease checks được mô tả trong
+[`docs/release/RELEASE_ACCEPTANCE.md`](docs/release/RELEASE_ACCEPTANCE.md) và
+[`docs/release/DEPLOYMENT_RUNBOOK.md`](docs/release/DEPLOYMENT_RUNBOOK.md).
+Ma trận capability/provenance của Task 05 có tại `GET /api/v1/data-platform/capabilities`
+và [`docs/data/TASK05_DATA_PLATFORM_AUDIT.md`](docs/data/TASK05_DATA_PLATFORM_AUDIT.md).
+Đối chiếu nội bộ có tại `GET /api/v1/data-quality/reconciliation` hoặc lệnh
+`python scripts/data_reconciliation_report.py` trong `apps/api`.
+Endpoint này chỉ đọc database; `IMPLEMENTED_AND_LIVE_VERIFIED` chỉ xuất hiện sau khi một
+request được cấp quyền thành công và sync run được lưu lại.
+
+Backfill Vnstock có checkpoint/resume và dừng an toàn khi gặp quota hoặc quyền bị từ chối:
+`python apps/api/scripts/vnstock_backfill.py --max-symbols 5`. Báo cáo coverage không gọi
+provider và chạy bằng `python apps/api/scripts/vnstock_coverage.py`. Batch 5/20/50 đã được
+nghiệm thu live; dữ liệu BCTC Vnstock mới chỉ ở bước discovery, chưa ghi canonical engine.
 
 ## Chạy cục bộ
 
@@ -138,10 +159,24 @@ Các cột nên có là `fiscal_quarter,reported_at,statement_scope,statement_st
 curl http://localhost:8000/api/v1/providers
 curl -X POST "http://localhost:8000/api/v1/sync/prices/HPG?provider=yahoo" \
   -H "Authorization: Bearer $ADMIN_API_TOKEN"
+## Khi đã được SSI cấp quyền và cài official ssi-fc-data SDK:
+curl -X POST "http://localhost:8000/api/v1/sync/securities?provider=ssi_fastconnect&markets=HOSE,HNX,UPCOM" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl -X POST "http://localhost:8000/api/v1/sync/prices/HPG?provider=ssi_fastconnect&mode=initial&limit=520" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl -X POST "http://localhost:8000/api/v1/sync/prices/HPG?provider=ssi_fastconnect&mode=incremental" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+curl -X POST "http://localhost:8000/api/v1/sync/indices?provider=ssi_fastconnect" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
 curl -X POST http://localhost:8000/api/v1/sync/financials/HPG \
   -H "Authorization: Bearer $ADMIN_API_TOKEN"
 curl http://localhost:8000/api/v1/sync/runs -H "Authorization: Bearer $ADMIN_API_TOKEN"
 ```
+
+SSI FastConnect dùng SDK Python chính thức và chỉ được đánh dấu live sau khi có
+credential, entitlement và một request thực tế thành công. Xem
+`docs/integrations/SSI_OFFICIAL_SDK.md`; CSV/XLSX được cấp quyền vẫn hoạt động
+độc lập khi SSI chưa được bật.
 
 `sync/financials` trả `BLOCKED` cho đến khi một provider BCTC có credential, entitlement
 và lần gọi thật thành công; dữ liệu file không bị mô tả nhầm là đồng bộ tự động.
@@ -185,7 +220,7 @@ PostgreSQL 16 và chặn dependency production có lỗ hổng mức `high` tr�
 - Pipeline BCTC, công thức nền tảng và DCF theo giả định người dùng đã có; chưa có credential provider tài chính live, peer set hoặc dải định giá lịch sử.
 - Chưa điều chỉnh đầy đủ corporate actions, lịch nghỉ giao dịch, dữ liệu intraday, live social feed hay danh mục VPS.
 - Tin tức được khớp theo tiêu đề/từ khóa nên có thể bỏ sót bài liên quan.
-- Jobs EOD, watchlist, alert-rule và daily snapshot đã có lease/idempotency/retry; cần worker/scheduler production để chạy định kỳ.
+- Jobs EOD, watchlist, alert-rule và daily snapshot đã có lease/idempotency/retry; worker production đã có trong Compose nhưng chỉ tự động cập nhật capability/provider được cấp quyền.
 - PDF dùng font hệ thống và có thể bỏ dấu khi môi trường thiếu font Unicode tương thích.
 
 Xem [implementation status](docs/IMPLEMENTATION_STATUS.md), [test report](docs/testing/TEST_REPORT.md), [production-readiness audit](docs/testing/PRODUCTION_READINESS_AUDIT.md), [architecture](docs/architecture/ARCHITECTURE.md), và [data sources](docs/integrations/DATA_SOURCES.md).
@@ -205,8 +240,9 @@ FINANCIAL_CSV_RIGHTS_CONFIRMED=true
 Endpoint `POST /api/v1/sync/financials/{symbol}` (yêu cầu admin bearer token)
 sẽ lấy CSV bằng HTTPS, kiểm tra kích thước, chuẩn hóa qua cùng logic CSV hiện tại
 và lưu trạng thái đồng bộ vào `/api/v1/sync/runs`.
-Endpoint này có thể được gọi từ cron/worker đã được vận hành và cấp quyền; dự án **chưa**
-triển khai một scheduler tự chạy production cho BCTC.
+Endpoint này được worker production gọi theo lịch khi feed đã được vận hành và cấp quyền;
+job BCTC vẫn giữ trạng thái `BLOCKED` cho đến khi credential, entitlement và lần gọi thật
+được xác minh.
 Feed phải hỗ trợ CSV có các cột `period_end,period_type,fiscal_year,statement_type,item_code,value,unit`;
 xem định dạng đầy đủ ở hướng dẫn nhập BCTC phía trên.
 Không nhúng token vào URL; dùng `FINANCIAL_CSV_BEARER_TOKEN`.

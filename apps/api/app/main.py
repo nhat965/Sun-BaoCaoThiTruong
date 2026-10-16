@@ -29,6 +29,8 @@ from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError, DataCapability
 from app.connectors.fireant import FireAntConnector
 from app.corporate_actions import import_corporate_actions, list_corporate_actions
+from app.coverage import build_data_coverage
+from app.data_capabilities import build_capability_audit
 from app.data_pipeline import (
     DataSyncService,
     list_sync_runs,
@@ -48,6 +50,7 @@ from app.database import (
     init_db,
 )
 from app.freshness import assess_freshness
+from app.hose_universe import build_hose_reconciliation, import_hose_universe, json_ready
 from app.market_foundation import (
     MarketIndexImportResult,
     canonical_market_universe,
@@ -67,10 +70,12 @@ from app.portfolio import (
     import_transactions_csv,
     portfolio_summary,
 )
+from app.reconciliation import build_reconciliation_report
 from app.registry import import_securities_csv, import_securities_xlsx, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
 from app.risk_scenarios import calculate_risks, calculate_scenarios
+from app.scheduler import ProductionScheduler
 from app.schemas import (
     AlertRuleRequest,
     AnalysisResponse,
@@ -117,6 +122,8 @@ from app.schemas import (
     TechnicalSnapshot,
     ValuationRequest,
     ValuationResult,
+    VnstockFreeCatalog,
+    VnstockFreeResponse,
     WatchlistItemRequest,
     WatchlistRequest,
 )
@@ -124,6 +131,8 @@ from app.sector_liquidity import calculate_liquidity, calculate_sectors
 from app.securities_explorer import list_securities
 from app.services import AnalysisService
 from app.social import analyze_social_batch
+from app.vnstock_financials import fetch_live_history, fetch_live_metrics, fetch_live_statements
+from app.vnstock_free import fetch_free_operation, operation_catalog, source_catalog
 
 
 @asynccontextmanager
@@ -958,13 +967,27 @@ def financial_statements(
 ) -> FinancialStatementsResponse:
     try:
         with SessionLocal() as session:
-            return FinancialRepository(session).statements(
+            canonical = FinancialRepository(session).statements(
                 symbol,
                 period_type=period_type,
                 statement_scope=statement_scope,
                 limit=limit,
             )
+        if canonical.periods:
+            return canonical
+        # The canonical repository is authoritative when populated.  For a
+        # symbol that has no imported periods, expose the entitled Vnstock
+        # Community response as read-only rather than showing a misleading
+        # empty BCTC panel.
+        return fetch_live_statements(
+            symbol,
+            period=period_type or "quarter",
+            limit=limit,
+            settings=get_settings(),
+        )
     except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -987,7 +1010,7 @@ def financial_validation_reports(
 async def sync_prices(
     symbol: str,
     request: Request,
-    provider: str = Query(default="auto", pattern="^(auto|yahoo|fixture)$"),
+    provider: str = Query(default="auto", pattern="^(auto|vnstock|yahoo|ssi_fastconnect|fixture)$"),
     mode: str = Query(default="auto", pattern="^(auto|initial|incremental)$"),
     limit: int = Query(520, ge=30, le=520),
     principal: Principal = Depends(require_admin),
@@ -1002,6 +1025,50 @@ async def sync_prices(
     except ConnectorError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     audit_success(request, principal, result, action="data_sync.prices")
+    return result
+
+
+@app.post("/api/v1/sync/securities", response_model=DataSyncRun)
+async def sync_securities_master(
+    request: Request,
+    provider: str = Query(default="vnstock", pattern="^(vnstock|ssi_fastconnect)$"),
+    markets: str = Query(default="HOSE,HNX,UPCOM"),
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    market_values = tuple(
+        value.strip().upper() for value in markets.split(",") if value.strip()
+    )
+    invalid = set(market_values) - {"HOSE", "HNX", "UPCOM"}
+    if not market_values or invalid:
+        raise HTTPException(status_code=422, detail="markets must be HOSE, HNX or UPCOM")
+    try:
+        result = await DataSyncService(config).sync_securities(
+            provider_id=provider,
+            markets=market_values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectorError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.securities")
+    return result
+
+
+@app.post("/api/v1/sync/indices", response_model=DataSyncRun)
+async def sync_market_indices(
+    request: Request,
+    provider: str = Query(default="vnstock", pattern="^(vnstock|ssi_fastconnect)$"),
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    try:
+        result = await DataSyncService(config).sync_indices(provider_id=provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectorError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.indices")
     return result
 
 
@@ -1047,8 +1114,11 @@ def fundamentals(symbol: str) -> FinancialMetricResult:
     try:
         with SessionLocal() as session:
             return FinancialRepository(session).calculate_latest(symbol)
-    except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LookupError:
+        try:
+            return fetch_live_metrics(symbol, settings=get_settings())
+        except (LookupError, ValueError) as live_exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(live_exc)) from live_exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -1068,8 +1138,16 @@ def fundamentals_history(
                 statement_scope=statement_scope,
                 limit=limit,
             )
-    except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (LookupError, ValueError):
+        try:
+            return fetch_live_history(
+                symbol,
+                period_type=period_type,
+                limit=limit,
+                settings=get_settings(),
+            )
+        except (LookupError, ValueError) as live_exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(live_exc)) from live_exc
 
 
 def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
@@ -1226,6 +1304,177 @@ async def enqueue_eod(symbol: str, payload: JobRequest | None = None, request: R
 def list_jobs(principal: Principal = Depends(require_admin)):
     with SessionLocal() as session:
         return [job_schema(job) for job in session.query(JobRecord).order_by(JobRecord.id.desc()).limit(100).all()]
+
+
+@app.get("/api/v1/data-quality/coverage")
+def data_quality_coverage(config: Settings = Depends(get_settings)):
+    """Detailed persisted coverage; no provider is contacted by this read-only endpoint."""
+    return build_data_coverage(config)
+
+
+@app.get("/api/v1/data-platform/hose/reconciliation")
+async def hose_reconciliation(config: Settings = Depends(get_settings)):
+    """Read-only VCI/KBS HOSE reconciliation with current DB presence."""
+    return json_ready(await build_hose_reconciliation(config))
+
+
+@app.post("/api/v1/sync/securities/hose")
+async def sync_hose_securities(
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+):
+    """Explicitly import the reconciled HOSE stock universe.
+
+    This endpoint never runs implicitly at startup. The operator must inspect
+    the read-only reconciliation first and create a database backup before
+    calling it.
+    """
+    try:
+        result = await import_hose_universe(config)
+    except (RuntimeError, ValueError, ConnectorError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result["import_result"], action="data_sync.securities.hose")
+    return json_ready(result)
+
+
+@app.get("/api/v1/data-platform/capabilities")
+def data_platform_capabilities(config: Settings = Depends(get_settings)):
+    """Return the evidence-backed data capability matrix.
+
+    This endpoint is read-only and never contacts an external provider.  It is
+    deliberately separate from the numeric coverage endpoint so consumers can
+    distinguish persisted rows from live verification and licensing status.
+    """
+    return build_capability_audit(config)
+
+
+@app.get("/api/v1/vnstock/free/catalog", response_model=VnstockFreeCatalog)
+def vnstock_free_catalog() -> VnstockFreeCatalog:
+    """Return the allow-listed Vnstock v5 Community/Expanded matrix.
+
+    This is metadata only; it never contacts Vnstock and never implies that a
+    locally configured credential has upstream entitlement.
+    """
+    return VnstockFreeCatalog(
+        generated_at=datetime.now(UTC),
+        operations=operation_catalog(),
+        sources=source_catalog(),
+        notes=[
+            "Community routes are read-only and require a permitted vci/kbs upstream source.",
+            "Expanded/Bronze routes are shown for transparency and return BLOCKED without entitlement.",
+            "Responses are not persisted into canonical tables until schema, units and provenance are validated.",
+        ],
+    )
+
+
+@app.get("/api/v1/vnstock/free/{operation:path}", response_model=VnstockFreeResponse)
+async def vnstock_free_data(
+    operation: str,
+    symbol: str | None = Query(default=None, description="Ticker, index or comma-separated symbols"),
+    source: str | None = Query(
+        default=None, pattern="^(vci|kbs|builtin|dukascopy|binance|vcb)?$"
+    ),
+    limit: int = Query(default=100, ge=1, le=5_000),
+    period: str = Query(default="year", pattern="^(year|quarter)$"),
+    report_format: str = Query(
+        default="long", alias="format", pattern="^(long|wide|time_series)$"
+    ),
+    date: str | None = Query(default=None, pattern=r"^$|^\d{4}-\d{2}-\d{2}$"),
+    start: str | None = Query(default=None, pattern=r"^$|^\d{4}(-\d{2})?(-\d{2})?$"),
+    end: str | None = Query(default=None, pattern=r"^$|^\d{4}(-\d{2})?(-\d{2})?$"),
+    interval: str = Query(default="1D", pattern="^(1m|5m|15m|30m|1H|1D|1W|1M)$"),
+    group: str | None = Query(default=None, max_length=32),
+    lang: str = Query(default="vi", pattern="^(vi|en)$"),
+    mode: str = Query(default="detailed", pattern="^(detailed|summary)$"),
+    last_id: str | None = Query(default=None, max_length=128),
+    side: str | None = Query(default=None, pattern="^(Buy|Sell|buy|sell|ATO|ATC|Unknown|unknown)?$"),
+    com_type: str | None = Query(default=None, max_length=32),
+    drop_empty: bool = Query(default=False),
+    config: Settings = Depends(get_settings),
+) -> VnstockFreeResponse:
+    """Fetch one named, documented Vnstock Community operation.
+
+    The operation is an allow-list key, not an arbitrary SDK path.  Provider
+    errors are represented as BLOCKED/FAILED JSON so callers can distinguish
+    missing entitlement from an empty market response.
+    """
+    result = await fetch_free_operation(
+        operation,
+        settings=config,
+        symbol=symbol,
+        source=source,
+        limit=limit,
+        period=period,
+        extra={
+            "date": date,
+            "start": start,
+            "end": end,
+            "interval": interval,
+            "group": group,
+            "lang": lang,
+            "mode": mode,
+            "last_id": last_id,
+            "side": side,
+            "com_type": com_type,
+            "drop_empty": drop_empty,
+            **({"format": report_format} if operation.startswith("fundamental.") else {}),
+        },
+    )
+    return VnstockFreeResponse.model_validate(result)
+
+
+@app.get("/api/v1/data-quality/reconciliation")
+def data_quality_reconciliation(config: Settings = Depends(get_settings)):
+    """Reconcile persisted datasets and provenance without contacting providers."""
+    return build_reconciliation_report(config)
+
+
+@app.get("/api/v1/admin/operations")
+def admin_operations(config: Settings = Depends(get_settings), principal: Principal = Depends(require_admin)):
+    with SessionLocal() as session:
+        jobs = [job_schema(job) for job in session.query(JobRecord).order_by(JobRecord.id.desc()).limit(100).all()]
+    return {"coverage": build_data_coverage(config), "jobs": jobs, "scheduler": {
+        "enabled": config.scheduler_enabled,
+        "timezone": config.market_timezone,
+        "daily_times": config.scheduler_daily_times,
+        "max_concurrency": config.scheduler_max_concurrency,
+    }}
+
+
+@app.post("/api/v1/admin/scheduler/run-once")
+async def admin_scheduler_run_once(principal: Principal = Depends(require_admin)):
+    return await ProductionScheduler(settings).run_cycle()
+
+
+@app.post("/api/v1/admin/jobs/{job_id}/retry", response_model=JobResult)
+def retry_job(job_id: int, principal: Principal = Depends(require_admin)):
+    try:
+        job = AutomationService(
+            AnalysisService(settings), settings.automation_max_retries,
+            settings.automation_lease_seconds, settings.market_timezone,
+        ).requeue(job_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    return job_schema(job)
+
+
+@app.post("/api/v1/admin/providers/health-check")
+async def admin_provider_health_check(principal: Principal = Depends(require_admin)):
+    scheduler = ProductionScheduler(settings)
+    job = scheduler.automation.enqueue_job(
+        "CHECK_PROVIDER_HEALTH", scheduled_for=datetime.now(UTC),
+        scope="market", idempotency_key=f"manual:provider-health:{datetime.now(UTC).replace(second=0, microsecond=0).isoformat()}",
+    )
+    return await scheduler.run_once(job.id)
+
+
+@app.post("/api/v1/admin/data/sync/{symbol}")
+async def admin_sync_symbol(symbol: str, principal: Principal = Depends(require_admin)):
+    run = await DataSyncService(settings).sync_prices(symbol, requested_mode="incremental")
+    return run.model_dump(mode="json")
 
 
 @app.post("/api/v1/jobs/{job_id}/run", response_model=JobResult)

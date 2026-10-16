@@ -14,12 +14,14 @@ dependencies = [
   "alembic>=1.14,<2",
   "psycopg[binary]>=3.2,<4",
   "httpx>=0.28,<1",
+  "ssi-fc-data>=2.2,<3",
   "reportlab>=4.2,<5",
   "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.3,<10", "ruff>=0.8,<1"]
+vnstock = ["vnstock>=5,<6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
