@@ -6,7 +6,7 @@ from io import BytesIO
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analyst import AnalystService
@@ -17,6 +17,7 @@ from app.analytics.valuation import (
     calculate_relative_valuation,
 )
 from app.auth import Principal, audit_event, audit_success, enforce_llm_rate_limit, require_admin
+from app.authorized_market_data import import_authorized_prices, preview_authorized_prices
 from app.automation import (
     AutomationService,
     add_watchlist_item,
@@ -28,6 +29,8 @@ from app.config import Settings, get_settings
 from app.connectors.base import ConnectorError, DataCapability
 from app.connectors.fireant import FireAntConnector
 from app.corporate_actions import import_corporate_actions, list_corporate_actions
+from app.coverage import build_data_coverage
+from app.data_capabilities import build_capability_audit
 from app.data_pipeline import (
     DataSyncService,
     list_sync_runs,
@@ -46,6 +49,8 @@ from app.database import (
     ValuationResultRecord,
     init_db,
 )
+from app.freshness import assess_freshness
+from app.hose_universe import build_hose_reconciliation, import_hose_universe, json_ready
 from app.market_foundation import (
     MarketIndexImportResult,
     canonical_market_universe,
@@ -65,15 +70,18 @@ from app.portfolio import (
     import_transactions_csv,
     portfolio_summary,
 )
+from app.reconciliation import build_reconciliation_report
 from app.registry import import_securities_csv, import_securities_xlsx, seed_registry_if_empty
 from app.reporting import build_pdf
 from app.repositories import FinancialRepository, NewsRepository, SecuritiesRepository
 from app.risk_scenarios import calculate_risks, calculate_scenarios
+from app.scheduler import ProductionScheduler
 from app.schemas import (
     AlertRuleRequest,
     AnalysisResponse,
     AnalystRequest,
     AnalystResponse,
+    AuthorizedPriceImportResult,
     CorporateAction,
     CorporateActionImportResult,
     DailyMarketReport,
@@ -114,6 +122,8 @@ from app.schemas import (
     TechnicalSnapshot,
     ValuationRequest,
     ValuationResult,
+    VnstockFreeCatalog,
+    VnstockFreeResponse,
     WatchlistItemRequest,
     WatchlistRequest,
 )
@@ -121,6 +131,8 @@ from app.sector_liquidity import calculate_liquidity, calculate_sectors
 from app.securities_explorer import list_securities
 from app.services import AnalysisService
 from app.social import analyze_social_batch
+from app.vnstock_financials import fetch_live_history, fetch_live_metrics, fetch_live_statements
+from app.vnstock_free import fetch_free_operation, operation_catalog, source_catalog
 
 
 @asynccontextmanager
@@ -158,6 +170,24 @@ app.add_middleware(
 
 def service(config: Settings = Depends(get_settings)) -> AnalysisService:
     return AnalysisService(config)
+
+
+def _freshness_label(
+    timestamp: datetime | None,
+    *,
+    market_session_date: date | None = None,
+    source_mode: str | None = None,
+    provider_freshness: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Return a conservative label; wall-clock age alone is not freshness evidence."""
+    return assess_freshness(
+        market_timestamp=timestamp,
+        market_session_date=market_session_date,
+        source_mode=source_mode,
+        provider_freshness=provider_freshness,
+        now=now,
+    ).status
 
 
 @app.get("/api/v1/health")
@@ -245,11 +275,31 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         security_ids_with_prices = set(
             session.scalars(select(PriceObservation.security_id).distinct()).all()
         )
+        security_ids_with_actual_values = set(
+            session.scalars(
+                select(PriceObservation.security_id)
+                .where(PriceObservation.actual_trading_value.is_not(None))
+                .distinct()
+            ).all()
+        )
+        security_ids_with_market_cap = set(
+            session.scalars(
+                select(PriceObservation.security_id)
+                .where(PriceObservation.market_cap.is_not(None))
+                .distinct()
+            ).all()
+        )
         active_with_prices = [
             row for row in active_securities if row.id in security_ids_with_prices
         ]
         missing_price_symbols = sorted(
             row.symbol for row in active_securities if row.id not in security_ids_with_prices
+        )
+        missing_actual_trading_value_symbols = sorted(
+            row.symbol for row in active_securities if row.id not in security_ids_with_actual_values
+        )
+        missing_market_cap_symbols = sorted(
+            row.symbol for row in active_securities if row.id not in security_ids_with_market_cap
         )
         security_ids_with_financials = set(
             session.scalars(select(FinancialPeriodRecord.security_id).distinct()).all()
@@ -276,8 +326,86 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
             if symbol
         )
         price_observations_count = session.scalar(select(func.count(PriceObservation.id))) or 0
+        price_sessions_count = session.scalar(
+            select(func.count(func.distinct(PriceObservation.market_session_date)))
+        ) or 0
+        price_sources = sorted(
+            source for source in session.scalars(select(PriceObservation.provider).distinct()).all() if source
+        )
         last_market_timestamp = session.scalar(select(func.max(PriceObservation.market_timestamp)))
         last_retrieval_timestamp = session.scalar(select(func.max(PriceObservation.ingested_at)))
+        latest_price = session.scalar(
+            select(PriceObservation).order_by(
+                PriceObservation.market_session_date.desc(),
+                PriceObservation.market_timestamp.desc(),
+                PriceObservation.ingested_at.desc(),
+                PriceObservation.id.desc(),
+            ).limit(1)
+        )
+        latest_freshness = assess_freshness(
+            market_timestamp=latest_price.market_timestamp if latest_price else None,
+            market_session_date=latest_price.market_session_date if latest_price else None,
+            source_mode=latest_price.source_mode if latest_price else None,
+            provider_freshness=latest_price.freshness if latest_price else None,
+        )
+        session_rows = session.execute(
+            select(
+                PriceObservation.market_session_date,
+                func.count(func.distinct(PriceObservation.security_id)),
+                func.count(PriceObservation.id),
+                func.count(PriceObservation.actual_trading_value),
+                func.count(PriceObservation.market_cap),
+            )
+            .group_by(PriceObservation.market_session_date)
+            .order_by(PriceObservation.market_session_date.desc())
+            .limit(30)
+        ).all()
+        price_coverage_by_session = {
+            session_date.isoformat(): {
+                "symbols_with_price": int(symbol_count),
+                "observations": int(observation_count),
+                "actual_trading_value_observations": int(actual_count),
+                "market_cap_observations": int(market_cap_count),
+            }
+            for session_date, symbol_count, observation_count, actual_count, market_cap_count in session_rows
+        }
+        exchange_rows = session.execute(
+            select(
+                SecurityRecord.exchange,
+                func.count(func.distinct(SecurityRecord.id)),
+                func.count(func.distinct(PriceObservation.security_id)),
+                func.count(PriceObservation.id),
+                func.count(func.distinct(case((PriceObservation.actual_trading_value.is_not(None), PriceObservation.security_id)))),
+                func.count(PriceObservation.actual_trading_value),
+                func.count(func.distinct(case((PriceObservation.market_cap.is_not(None), PriceObservation.security_id)))),
+            )
+            .outerjoin(PriceObservation, PriceObservation.security_id == SecurityRecord.id)
+            .where(
+                SecurityRecord.listing_status == "active",
+                SecurityRecord.security_type == "stock",
+            )
+            .group_by(SecurityRecord.exchange)
+        ).all()
+        price_coverage_by_exchange = {
+            exchange: {
+                "active_count": int(active_count),
+                "symbols_with_price": int(price_symbols),
+                "missing_price_count": int(active_count - price_symbols),
+                "observations": int(observation_count),
+                "symbols_with_actual_trading_value": int(actual_symbols),
+                "actual_trading_value_observations": int(actual_count),
+                "symbols_with_market_cap": int(market_cap_symbols),
+            }
+            for (
+                exchange,
+                active_count,
+                price_symbols,
+                observation_count,
+                actual_symbols,
+                actual_count,
+                market_cap_symbols,
+            ) in exchange_rows
+        }
         latest_market_timestamp_by_exchange = {
             exchange: timestamp
             for exchange, timestamp in session.execute(
@@ -307,6 +435,11 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
             )
             or 0
         )
+        actual_trading_value_observations_count = session.scalar(
+            select(func.count(PriceObservation.id)).where(
+                PriceObservation.actual_trading_value.is_not(None)
+            )
+        ) or 0
         health = {
             row.source_name: row for row in session.scalars(select(SourceHealthRecord)).all()
         }
@@ -363,6 +496,14 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         issues.append("Securities master mới là tập bootstrap, chưa có độ phủ toàn thị trường.")
     if index_payload.data_status == "unavailable":
         issues.append("Chưa có dữ liệu chỉ số thị trường được cấp quyền lưu trữ.")
+    if latest_freshness.status == "unconfirmed":
+        issues.append(
+            "Phiên giá gần nhất chỉ là weekday candidate; chưa có lịch giao dịch chính thức để xác nhận là realtime."
+        )
+    elif latest_freshness.status in {"delayed", "historical", "fixture", "stale"}:
+        issues.append(
+            f"Dữ liệu giá gần nhất được phân loại {latest_freshness.status}; không trình bày như realtime."
+        )
 
     return DataQualityReport(
         generated_at=datetime.now(UTC),
@@ -371,10 +512,26 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         active_securities_count=active_securities_count,
         exchange_distribution=exchange_distribution,
         price_observations_count=price_observations_count,
+        price_sessions_count=price_sessions_count,
+        price_sources=price_sources,
+        latest_price_freshness=latest_freshness.status,
+        latest_price_freshness_basis=latest_freshness.basis,
+        latest_price_session_status=latest_freshness.session_status,
+        price_coverage_by_session=price_coverage_by_session,
+        price_coverage_by_exchange=price_coverage_by_exchange,
         symbols_with_price_history=len(active_with_prices),
         symbols_missing_price_history=len(missing_price_symbols),
         symbols_with_financial_statements=len(active_with_financials),
         symbols_missing_financial_statements=len(missing_financial_symbols),
+        symbols_with_actual_trading_value=len(
+            [row for row in active_securities if row.id in security_ids_with_actual_values]
+        ),
+        actual_trading_value_observations_count=actual_trading_value_observations_count,
+        missing_actual_trading_value_symbols=missing_actual_trading_value_symbols[:50],
+        symbols_with_market_cap=len(
+            [row for row in active_securities if row.id in security_ids_with_market_cap]
+        ),
+        missing_market_cap_symbols=missing_market_cap_symbols[:50],
         price_coverage_percent=round(
             len(active_with_prices) / active_securities_count * 100, 2
         )
@@ -397,7 +554,9 @@ def data_quality(config: Settings = Depends(get_settings)) -> DataQualityReport:
         stocks_with_20_sessions=universe.history_20_count,
         stocks_with_50_sessions=universe.history_50_count,
         stocks_with_200_sessions=universe.history_200_count,
-        stocks_with_market_cap=universe.market_cap_count,
+        stocks_with_market_cap=len(
+            [row for row in active_securities if row.id in security_ids_with_market_cap]
+        ),
         stocks_with_foreign_flow=universe.foreign_flow_count,
         universe_coverage_by_exchange={
             exchange: {"active_count": count}
@@ -586,6 +745,48 @@ def market_indices() -> MarketIndicesResponse:
     return list_market_indices()
 
 
+@app.post("/api/v1/market/prices/import/preview", response_model=AuthorizedPriceImportResult)
+def market_prices_import_preview(
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="authorized-ohlcv-preview", alias="X-Source-Name"),
+    _: Principal = Depends(require_admin),
+) -> AuthorizedPriceImportResult:
+    """Validate an operator-authorized OHLCV file without writing to the database."""
+    if len(csv_content.encode("utf-8")) > 5_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        return preview_authorized_prices(csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/market/prices/import", response_model=AuthorizedPriceImportResult)
+def market_prices_import(
+    request: Request,
+    csv_content: str = Body(media_type="text/csv"),
+    source_name: str = Header(default="authorized-ohlcv-import", alias="X-Source-Name"),
+    principal: Principal = Depends(require_admin),
+) -> AuthorizedPriceImportResult:
+    """Import OHLCV only from a file the operator is authorized to use."""
+    if len(csv_content.encode("utf-8")) > 5_000_000:
+        raise HTTPException(status_code=413, detail="CSV is too large.")
+    try:
+        result = import_authorized_prices(csv_content, source_name[:128])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_file_import(
+        capability=DataCapability.HISTORICAL_OHLCV,
+        symbol=None,
+        inserted=result.inserted,
+        updated=result.updated,
+        skipped=result.skipped,
+        rejected=result.rejected,
+        source_name=source_name[:128],
+    )
+    audit_success(request, principal, result, action="market.prices.import")
+    return result
+
+
 @app.post("/api/v1/market/indices/import", response_model=MarketIndexImportResult)
 def market_indices_import(
     request: Request,
@@ -766,13 +967,27 @@ def financial_statements(
 ) -> FinancialStatementsResponse:
     try:
         with SessionLocal() as session:
-            return FinancialRepository(session).statements(
+            canonical = FinancialRepository(session).statements(
                 symbol,
                 period_type=period_type,
                 statement_scope=statement_scope,
                 limit=limit,
             )
+        if canonical.periods:
+            return canonical
+        # The canonical repository is authoritative when populated.  For a
+        # symbol that has no imported periods, expose the entitled Vnstock
+        # Community response as read-only rather than showing a misleading
+        # empty BCTC panel.
+        return fetch_live_statements(
+            symbol,
+            period=period_type or "quarter",
+            limit=limit,
+            settings=get_settings(),
+        )
     except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -795,7 +1010,7 @@ def financial_validation_reports(
 async def sync_prices(
     symbol: str,
     request: Request,
-    provider: str = Query(default="auto", pattern="^(auto|yahoo|fixture)$"),
+    provider: str = Query(default="auto", pattern="^(auto|vnstock|yahoo|ssi_fastconnect|fixture)$"),
     mode: str = Query(default="auto", pattern="^(auto|initial|incremental)$"),
     limit: int = Query(520, ge=30, le=520),
     principal: Principal = Depends(require_admin),
@@ -810,6 +1025,50 @@ async def sync_prices(
     except ConnectorError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     audit_success(request, principal, result, action="data_sync.prices")
+    return result
+
+
+@app.post("/api/v1/sync/securities", response_model=DataSyncRun)
+async def sync_securities_master(
+    request: Request,
+    provider: str = Query(default="vnstock", pattern="^(vnstock|ssi_fastconnect)$"),
+    markets: str = Query(default="HOSE,HNX,UPCOM"),
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    market_values = tuple(
+        value.strip().upper() for value in markets.split(",") if value.strip()
+    )
+    invalid = set(market_values) - {"HOSE", "HNX", "UPCOM"}
+    if not market_values or invalid:
+        raise HTTPException(status_code=422, detail="markets must be HOSE, HNX or UPCOM")
+    try:
+        result = await DataSyncService(config).sync_securities(
+            provider_id=provider,
+            markets=market_values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectorError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.securities")
+    return result
+
+
+@app.post("/api/v1/sync/indices", response_model=DataSyncRun)
+async def sync_market_indices(
+    request: Request,
+    provider: str = Query(default="vnstock", pattern="^(vnstock|ssi_fastconnect)$"),
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+) -> DataSyncRun:
+    try:
+        result = await DataSyncService(config).sync_indices(provider_id=provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectorError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result, action="data_sync.indices")
     return result
 
 
@@ -855,8 +1114,11 @@ def fundamentals(symbol: str) -> FinancialMetricResult:
     try:
         with SessionLocal() as session:
             return FinancialRepository(session).calculate_latest(symbol)
-    except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LookupError:
+        try:
+            return fetch_live_metrics(symbol, settings=get_settings())
+        except (LookupError, ValueError) as live_exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(live_exc)) from live_exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -876,8 +1138,16 @@ def fundamentals_history(
                 statement_scope=statement_scope,
                 limit=limit,
             )
-    except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (LookupError, ValueError):
+        try:
+            return fetch_live_history(
+                symbol,
+                period_type=period_type,
+                limit=limit,
+                settings=get_settings(),
+            )
+        except (LookupError, ValueError) as live_exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(live_exc)) from live_exc
 
 
 def _calculate_valuation(inputs: ValuationRequest) -> ValuationResult:
@@ -1034,6 +1304,178 @@ async def enqueue_eod(symbol: str, payload: JobRequest | None = None, request: R
 def list_jobs(principal: Principal = Depends(require_admin)):
     with SessionLocal() as session:
         return [job_schema(job) for job in session.query(JobRecord).order_by(JobRecord.id.desc()).limit(100).all()]
+
+
+@app.get("/api/v1/data-quality/coverage")
+def data_quality_coverage(config: Settings = Depends(get_settings)):
+    """Detailed persisted coverage; no provider is contacted by this read-only endpoint."""
+    return build_data_coverage(config)
+
+
+@app.get("/api/v1/data-platform/hose/reconciliation")
+async def hose_reconciliation(config: Settings = Depends(get_settings)):
+    """Read-only VCI/KBS HOSE reconciliation with current DB presence."""
+    return json_ready(await build_hose_reconciliation(config))
+
+
+@app.post("/api/v1/sync/securities/hose")
+async def sync_hose_securities(
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    config: Settings = Depends(get_settings),
+):
+    """Explicitly import the reconciled HOSE stock universe.
+
+    This endpoint never runs implicitly at startup. The operator must inspect
+    the read-only reconciliation first and create a database backup before
+    calling it.
+    """
+    try:
+        result = await import_hose_universe(config)
+    except (RuntimeError, ValueError, ConnectorError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit_success(request, principal, result["import_result"], action="data_sync.securities.hose")
+    return json_ready(result)
+
+
+@app.get("/api/v1/data-platform/capabilities")
+def data_platform_capabilities(config: Settings = Depends(get_settings)):
+    """Return the evidence-backed data capability matrix.
+
+    This endpoint is read-only and never contacts an external provider.  It is
+    deliberately separate from the numeric coverage endpoint so consumers can
+    distinguish persisted rows from live verification and licensing status.
+    """
+    return build_capability_audit(config)
+
+
+@app.get("/api/v1/vnstock/free/catalog", response_model=VnstockFreeCatalog)
+def vnstock_free_catalog() -> VnstockFreeCatalog:
+    """Return the allow-listed Vnstock v5 Community/Expanded matrix.
+
+    This is metadata only; it never contacts Vnstock and never implies that a
+    locally configured credential has upstream entitlement.
+    """
+    return VnstockFreeCatalog(
+        generated_at=datetime.now(UTC),
+        operations=operation_catalog(),
+        sources=source_catalog(),
+        notes=[
+            "The official Community policy exposes 42 routes (41 active after the removed gold route); aliases expose the same upstream route without duplicating data.",
+            "Each operation declares its SDK route, default source and allowed sources; the gateway does not silently switch providers.",
+            "Expanded/Bronze routes are shown for transparency and return BLOCKED without entitlement.",
+            "Responses are not persisted into canonical tables until schema, units and provenance are validated; SDK cap metadata is returned when available.",
+        ],
+    )
+
+
+@app.get("/api/v1/vnstock/free/{operation:path}", response_model=VnstockFreeResponse)
+async def vnstock_free_data(
+    operation: str,
+    symbol: str | None = Query(default=None, description="Ticker, index or comma-separated symbols"),
+    source: str | None = Query(
+        default=None, pattern="^(vci|kbs|builtin|dukascopy|binance|vcb)?$"
+    ),
+    limit: int = Query(default=100, ge=1, le=5_000),
+    period: str = Query(default="year", pattern="^(year|quarter)$"),
+    report_format: str = Query(
+        default="long", alias="format", pattern="^(long|wide|time_series)$"
+    ),
+    date: str | None = Query(default=None, pattern=r"^$|^\d{4}-\d{2}-\d{2}$"),
+    start: str | None = Query(default=None, pattern=r"^$|^\d{4}(-\d{2})?(-\d{2})?$"),
+    end: str | None = Query(default=None, pattern=r"^$|^\d{4}(-\d{2})?(-\d{2})?$"),
+    interval: str = Query(default="1D", pattern="^(1m|5m|15m|30m|1H|1D|1W|1M)$"),
+    group: str | None = Query(default=None, max_length=32),
+    lang: str = Query(default="vi", pattern="^(vi|en)$"),
+    mode: str = Query(default="detailed", pattern="^(detailed|summary)$"),
+    last_id: str | None = Query(default=None, max_length=128),
+    side: str | None = Query(default=None, pattern="^(Buy|Sell|buy|sell|ATO|ATC|Unknown|unknown)?$"),
+    com_type: str | None = Query(default=None, max_length=32),
+    drop_empty: bool = Query(default=False),
+    config: Settings = Depends(get_settings),
+) -> VnstockFreeResponse:
+    """Fetch one named, documented Vnstock Community operation.
+
+    The operation is an allow-list key, not an arbitrary SDK path.  Provider
+    errors are represented as BLOCKED/FAILED JSON so callers can distinguish
+    missing entitlement from an empty market response.
+    """
+    result = await fetch_free_operation(
+        operation,
+        settings=config,
+        symbol=symbol,
+        source=source,
+        limit=limit,
+        period=period,
+        extra={
+            "date": date,
+            "start": start,
+            "end": end,
+            "interval": interval,
+            "group": group,
+            "lang": lang,
+            "mode": mode,
+            "last_id": last_id,
+            "side": side,
+            "com_type": com_type,
+            "drop_empty": drop_empty,
+            **({"format": report_format} if operation.startswith("fundamental.") else {}),
+        },
+    )
+    return VnstockFreeResponse.model_validate(result)
+
+
+@app.get("/api/v1/data-quality/reconciliation")
+def data_quality_reconciliation(config: Settings = Depends(get_settings)):
+    """Reconcile persisted datasets and provenance without contacting providers."""
+    return build_reconciliation_report(config)
+
+
+@app.get("/api/v1/admin/operations")
+def admin_operations(config: Settings = Depends(get_settings), principal: Principal = Depends(require_admin)):
+    with SessionLocal() as session:
+        jobs = [job_schema(job) for job in session.query(JobRecord).order_by(JobRecord.id.desc()).limit(100).all()]
+    return {"coverage": build_data_coverage(config), "jobs": jobs, "scheduler": {
+        "enabled": config.scheduler_enabled,
+        "timezone": config.market_timezone,
+        "daily_times": config.scheduler_daily_times,
+        "max_concurrency": config.scheduler_max_concurrency,
+    }}
+
+
+@app.post("/api/v1/admin/scheduler/run-once")
+async def admin_scheduler_run_once(principal: Principal = Depends(require_admin)):
+    return await ProductionScheduler(settings).run_cycle()
+
+
+@app.post("/api/v1/admin/jobs/{job_id}/retry", response_model=JobResult)
+def retry_job(job_id: int, principal: Principal = Depends(require_admin)):
+    try:
+        job = AutomationService(
+            AnalysisService(settings), settings.automation_max_retries,
+            settings.automation_lease_seconds, settings.market_timezone,
+        ).requeue(job_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    return job_schema(job)
+
+
+@app.post("/api/v1/admin/providers/health-check")
+async def admin_provider_health_check(principal: Principal = Depends(require_admin)):
+    scheduler = ProductionScheduler(settings)
+    job = scheduler.automation.enqueue_job(
+        "CHECK_PROVIDER_HEALTH", scheduled_for=datetime.now(UTC),
+        scope="market", idempotency_key=f"manual:provider-health:{datetime.now(UTC).replace(second=0, microsecond=0).isoformat()}",
+    )
+    return await scheduler.run_once(job.id)
+
+
+@app.post("/api/v1/admin/data/sync/{symbol}")
+async def admin_sync_symbol(symbol: str, principal: Principal = Depends(require_admin)):
+    run = await DataSyncService(settings).sync_prices(symbol, requested_mode="incremental")
+    return run.model_dump(mode="json")
 
 
 @app.post("/api/v1/jobs/{job_id}/run", response_model=JobResult)

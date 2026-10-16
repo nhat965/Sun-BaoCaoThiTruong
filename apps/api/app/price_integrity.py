@@ -10,6 +10,7 @@ from app.database import PriceObservation
 
 SOURCE_PROVIDER_IDS = {
     "Yahoo Finance chart": "yahoo",
+    "Vnstock v5": "vnstock",
     "Synthetic fixture (development only)": "fixture",
 }
 
@@ -59,6 +60,7 @@ def canonical_daily_prices(settings: Settings | None = None):
             PriceObservation.provider_id.label("provider_id"),
             PriceObservation.source_mode.label("source_mode"),
             PriceObservation.validation_status.label("validation_status"),
+            PriceObservation.freshness.label("freshness"),
             validation_rank.label("validation_rank"),
             PriceObservation.adjusted.label("adjusted"),
             provider_rank.label("provider_rank"),

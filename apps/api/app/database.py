@@ -500,6 +500,20 @@ class JobRecord(Base):
     worker_id: Mapped[str | None] = mapped_column(String(128))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    provider: Mapped[str | None] = mapped_column(String(128), index=True)
+    scope: Mapped[str | None] = mapped_column(String(64), index=True)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    inserted_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    cursor_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cursor_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_freshness: Mapped[str | None] = mapped_column(String(32))
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), unique=True, index=True)
 
 
 class JobRunRecord(Base):

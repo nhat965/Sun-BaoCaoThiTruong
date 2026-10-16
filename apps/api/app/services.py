@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from app.analytics.technical import calculate_snapshot, percentage_change
 from app.config import Settings
+from app.connectors.base import ConnectorError
 from app.connectors.manager import ConnectorManager
 from app.connectors.news import RssNewsConnector, VnExpressRssConnector
 from app.database import AnalysisRun, SessionLocal
@@ -24,10 +25,24 @@ class AnalysisService:
         self.fixture_mode = settings.market_data_mode == "fixture"
 
     async def prices(self, symbol: str, limit: int = 260) -> PriceSeries:
-        series = normalize_price_series(await self.manager.prices(symbol, limit))
-        with SessionLocal() as session:
-            PriceRepository(session).upsert_series(series)
-            session.commit()
+        used_persisted = False
+        try:
+            series = normalize_price_series(await self.manager.prices(symbol, limit))
+        except ConnectorError:
+            # Keep analysis usable during a provider outage, but only from
+            # observations already persisted by an earlier successful sync.
+            # The provenance is explicitly delayed/historical; nothing is
+            # inferred or fabricated here.
+            with SessionLocal() as session:
+                persisted = PriceRepository(session).persisted_series(symbol, limit)
+            if persisted is None:
+                raise
+            series = normalize_price_series(persisted)
+            used_persisted = True
+        if not used_persisted:
+            with SessionLocal() as session:
+                PriceRepository(session).upsert_series(series)
+                session.commit()
         return series
 
     async def analyze(self, symbol: str) -> AnalysisResponse:
@@ -77,6 +92,20 @@ class AnalysisService:
             f"Có {len(news)} tiêu đề RSS khớp từ khóa; đây không phải đánh giá đầy đủ toàn bộ tin tức thị trường.",
         ]
         summary.extend(technicals.conflicts)
+        limitations = [
+            "Nguồn giá phát triển không phải feed thương mại được cấp phép riêng.",
+            "Giá chưa được điều chỉnh đầy đủ cho mọi corporate action.",
+            "Phân tích kỹ thuật mô tả dữ liệu quá khứ, không bảo đảm kết quả đầu tư.",
+        ]
+        if prices.provenance.freshness == "historical":
+            limitations.append(
+                "Nguồn trực tuyến hiện không phản hồi; đang dùng OHLCV đã lưu với "
+                "timestamp và provenance. Đây không phải dữ liệu realtime."
+            )
+            summary.append(
+                "Phân tích được dựng từ dữ liệu OHLCV đã lưu; cần kiểm tra nguồn trực tuyến "
+                "trước khi coi mốc giá là cập nhật."
+            )
         result = AnalysisResponse(
             security=prices.security,
             latest_price=bars[-1].close,
@@ -86,11 +115,7 @@ class AnalysisService:
             technicals=technicals,
             news=news,
             summary=summary,
-            limitations=[
-                "Nguồn giá phát triển không phải feed thương mại được cấp phép riêng.",
-                "Giá chưa được điều chỉnh đầy đủ cho mọi corporate action.",
-                "Phân tích kỹ thuật mô tả dữ liệu quá khứ, không bảo đảm kết quả đầu tư.",
-            ],
+            limitations=limitations,
             generated_at=datetime.now(UTC),
             evidence_count=len(bars) + len(news),
             bullish_factors=bullish_factors,

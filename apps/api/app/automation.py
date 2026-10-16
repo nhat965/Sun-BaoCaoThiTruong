@@ -22,6 +22,12 @@ from app.database import (
 from app.schemas import DailyMarketReport
 
 
+def _json_default(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
 @dataclass(frozen=True)
 class JobLease:
     job_id: int
@@ -44,6 +50,57 @@ class AutomationService:
         self.lease_seconds = lease_seconds
         self.market_timezone = market_timezone
 
+    def enqueue_job(
+        self,
+        job_type: str,
+        *,
+        symbol: str = "__MARKET__",
+        scheduled_for: datetime | None = None,
+        provider: str | None = None,
+        scope: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> JobRecord:
+        """Create a durable, replay-safe job. The unique key is the ownership boundary."""
+        zone = ZoneInfo(self.market_timezone)
+        candidate = scheduled_for or datetime.now(zone)
+        if candidate.tzinfo is None:
+            raise ValueError("scheduled_for must include a timezone")
+        scheduled = candidate.astimezone(UTC).replace(second=0, microsecond=0)
+        symbol = symbol.strip().upper()
+        now = datetime.now(UTC)
+        with SessionLocal() as session:
+            statement = select(JobRecord).where(
+                JobRecord.job_type == job_type,
+                JobRecord.symbol == symbol,
+                JobRecord.scheduled_for == scheduled,
+            )
+            if idempotency_key:
+                statement = select(JobRecord).where(JobRecord.idempotency_key == idempotency_key)
+            job = session.scalar(statement)
+            if job is None:
+                job = JobRecord(
+                    job_type=job_type,
+                    symbol=symbol,
+                    scheduled_for=scheduled,
+                    status="QUEUED",
+                    attempts=0,
+                    created_at=now,
+                    updated_at=now,
+                    provider=provider,
+                    scope=scope,
+                    requested_at=now,
+                    idempotency_key=idempotency_key,
+                )
+                session.add(job)
+                try:
+                    session.commit()
+                except IntegrityError:
+                    session.rollback()
+                    job = session.scalar(statement)
+                if job is not None:
+                    session.refresh(job)
+            return job
+
     def enqueue_eod(self, symbol: str, scheduled_for: datetime | None = None) -> JobRecord:
         zone = ZoneInfo(self.market_timezone)
         candidate = scheduled_for or datetime.now(zone)
@@ -52,20 +109,10 @@ class AutomationService:
         if candidate.astimezone(zone).weekday() >= 5:
             raise ValueError("EOD jobs are not scheduled on weekends")
         scheduled = candidate.astimezone(UTC).replace(second=0, microsecond=0)
-        with SessionLocal() as session:
-            job = session.scalar(select(JobRecord).where(JobRecord.job_type == "eod", JobRecord.symbol == symbol.upper(), JobRecord.scheduled_for == scheduled))
-            if job is None:
-                now = datetime.now(UTC)
-                job = JobRecord(job_type="eod", symbol=symbol.upper(), scheduled_for=scheduled, status="QUEUED", attempts=0, created_at=now, updated_at=now)
-                session.add(job)
-                try:
-                    session.commit()
-                except IntegrityError:
-                    session.rollback()
-                    job = session.scalar(select(JobRecord).where(JobRecord.job_type == "eod", JobRecord.symbol == symbol.upper(), JobRecord.scheduled_for == scheduled))
-                if job is not None:
-                    session.refresh(job)
-            return job
+        return self.enqueue_job(
+            "eod", symbol=symbol, scheduled_for=scheduled, scope="security",
+            idempotency_key=f"eod:{symbol.strip().upper()}:{scheduled.isoformat()}",
+        )
 
     def claim(
         self, job_id: int, *, worker_id: str | None = None, now: datetime | None = None
@@ -107,6 +154,7 @@ class AutomationService:
                     worker_id=worker_id,
                     heartbeat_at=now,
                     next_attempt_at=None,
+                    started_at=now,
                 )
                 .execution_options(synchronize_session=False)
             )
@@ -224,6 +272,23 @@ class AutomationService:
             lease, result=None, error=error[:1024], snapshot=None, now=now
         )
 
+    def complete_blocked(
+        self, lease: JobLease, error: str, *, error_code: str = "provider_blocked",
+        now: datetime | None = None,
+    ) -> JobRecord:
+        return self._complete(
+            lease, result=None, error=error[:1024], snapshot=None, now=now,
+            terminal_status="BLOCKED", error_code=error_code,
+        )
+
+    def complete_partial(
+        self, lease: JobLease, result: dict[str, object], *, now: datetime | None = None
+    ) -> JobRecord:
+        return self._complete(
+            lease, result=result, error=None, snapshot=None, now=now,
+            terminal_status="PARTIAL", error_code="partial_source",
+        )
+
     def _complete(
         self,
         lease: JobLease,
@@ -232,13 +297,15 @@ class AutomationService:
         error: str | None,
         snapshot: DailyMarketReport | None,
         now: datetime | None,
+        terminal_status: str | None = None,
+        error_code: str | None = None,
     ) -> JobRecord:
         now = now or datetime.now(UTC)
         with SessionLocal() as session:
             current = session.get(JobRecord, lease.job_id)
             if current is None:
                 raise LookupError("Job không tồn tại")
-            status = (
+            status = terminal_status or (
                 "SUCCESS"
                 if error is None
                 else ("FAILED" if current.attempts >= self.max_retries else "RETRY_PENDING")
@@ -260,6 +327,15 @@ class AutomationService:
                     worker_id=None,
                     heartbeat_at=now,
                     next_attempt_at=next_attempt_at,
+                    finished_at=now if status in {"SUCCESS", "PARTIAL", "FAILED", "BLOCKED", "CANCELLED"} else None,
+                    error_code=error_code or ("job_failed" if error else None),
+                    inserted_count=int((result or {}).get("inserted_count", 0) or 0),
+                    updated_count=int((result or {}).get("updated_count", 0) or 0),
+                    skipped_count=int((result or {}).get("skipped_count", 0) or 0),
+                    error_count=int((result or {}).get("error_count", 0) or (1 if error else 0)),
+                    cursor_from=(result or {}).get("cursor_from"),
+                    cursor_to=(result or {}).get("cursor_to"),
+                    source_freshness=(result or {}).get("source_freshness"),
                 )
                 .execution_options(synchronize_session=False)
             )
@@ -275,7 +351,7 @@ class AutomationService:
                         status=status,
                         finished_at=now,
                         error=error,
-                        result_json=json.dumps(result or {}, ensure_ascii=False),
+                        result_json=json.dumps(result or {}, ensure_ascii=False, default=_json_default),
                         heartbeat_at=now,
                     )
                     .execution_options(synchronize_session=False)
@@ -330,8 +406,39 @@ class AutomationService:
             JobRecord.lease_expires_at > now,
         )
 
+    def requeue(self, job_id: int) -> JobRecord:
+        """Explicit admin replay; does not create a second idempotency key."""
+        with SessionLocal() as session:
+            job = session.get(JobRecord, job_id)
+            if job is None:
+                raise LookupError("Job không tồn tại")
+            if job.status not in {"FAILED", "BLOCKED", "RETRY_PENDING"}:
+                raise ValueError("Chỉ có thể chạy lại job FAILED, BLOCKED hoặc RETRY_PENDING")
+            job.status = "QUEUED"
+            job.attempts = 0
+            job.next_attempt_at = None
+            job.last_error = None
+            job.error_code = None
+            job.updated_at = datetime.now(UTC)
+            session.commit()
+            session.refresh(job)
+            session.expunge(job)
+            return job
+
 def job_schema(job: JobRecord) -> dict:
-    return {"id": job.id, "job_type": job.job_type, "symbol": job.symbol, "scheduled_for": job.scheduled_for, "status": job.status, "attempts": job.attempts, "last_error": job.last_error, "next_attempt_at": job.next_attempt_at}
+    return {
+        "id": job.id, "job_type": job.job_type, "symbol": job.symbol,
+        "scheduled_for": job.scheduled_for, "status": job.status,
+        "attempts": job.attempts, "last_error": job.last_error,
+        "next_attempt_at": job.next_attempt_at, "provider": job.provider,
+        "scope": job.scope, "requested_at": job.requested_at,
+        "started_at": job.started_at, "finished_at": job.finished_at,
+        "error_code": job.error_code, "inserted_count": job.inserted_count,
+        "updated_count": job.updated_count, "skipped_count": job.skipped_count,
+        "error_count": job.error_count, "cursor_from": job.cursor_from,
+        "cursor_to": job.cursor_to, "source_freshness": job.source_freshness,
+        "idempotency_key": job.idempotency_key,
+    }
 
 def create_watchlist(name: str):
     with SessionLocal() as session:

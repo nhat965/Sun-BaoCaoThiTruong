@@ -1,7 +1,15 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, select
 
 from app.auth import admin_rate_limiter
 from app.config import Settings, get_settings
+from app.database import (
+    FinancialMetricRecord,
+    FinancialPeriodRecord,
+    FinancialStatementItemRecord,
+    FinancialValidationReportRecord,
+    SessionLocal,
+)
 from app.main import app
 
 
@@ -40,3 +48,36 @@ def test_hpg_and_fpt_authorized_statement_flow_is_idempotent():
     finally:
         app.dependency_overrides.clear()
         admin_rate_limiter.reset()
+        # This test intentionally uses a future-dated fixture.  Never leave it
+        # in the developer/acceptance database after pytest exits.
+        with SessionLocal() as session:
+            period_ids = list(
+                session.scalars(
+                    select(FinancialPeriodRecord.id).where(
+                        FinancialPeriodRecord.source_name == "acceptance-file",
+                        FinancialPeriodRecord.fiscal_year == 2099,
+                    )
+                ).all()
+            )
+            if period_ids:
+                session.execute(
+                    delete(FinancialMetricRecord).where(
+                        FinancialMetricRecord.period_id.in_(period_ids)
+                    )
+                )
+                session.execute(
+                    delete(FinancialStatementItemRecord).where(
+                        FinancialStatementItemRecord.period_id.in_(period_ids)
+                    )
+                )
+                session.execute(
+                    delete(FinancialValidationReportRecord).where(
+                        FinancialValidationReportRecord.period_id.in_(period_ids)
+                    )
+                )
+                session.execute(
+                    delete(FinancialPeriodRecord).where(
+                        FinancialPeriodRecord.id.in_(period_ids)
+                    )
+                )
+                session.commit()

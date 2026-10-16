@@ -1,11 +1,11 @@
-# Market Intelligence test report — PR-A
+# Market Intelligence test report — production-readiness audit
 
 ## Scope
 
-This report covers the Market Data Foundation only: session semantics, canonical provider
-selection, market-universe coverage, index provenance and idempotent authorized import.
-Breadth, sector, risk, scenarios and frontend intelligence are intentionally deferred to
-later PRs.
+This report records the current `main` audit: session semantics, canonical provider
+selection, market-universe coverage, index provenance, breadth, sector, liquidity, risk,
+scenario and frontend evidence. The detailed production-readiness table is in
+`docs/testing/PRODUCTION_READINESS_AUDIT.md`.
 
 ## Automated coverage
 
@@ -13,12 +13,15 @@ later PRs.
   handling, history-depth denominators, index import provenance and replay idempotency.
 - Ruff passes for the backend source and tests.
 - Frontend lint and production build pass on the unchanged frontend surface.
-- GitHub Actions CI run `#33` passed: 84 backend tests, PostgreSQL migration verification,
-  Python dependency audit, frontend lint, production build and dependency audit.
-- Pytest and Alembic execution are currently blocked on this host because the checked-in
-  `.venv` points to `C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe`,
-  which is no longer installed. The existing Codex API process was still verified through
-  HTTP after the additive schema was reconciled locally.
+- Local pytest passed: 119 backend tests.
+- Local Ruff passed for `app`, `tests` and `scripts`.
+- A temporary SQLite migration cycle (upgrade/downgrade/upgrade) passed at revision `0021`.
+- The labelled benchmark passed for 1,000 securities × 200 sessions (200,000 observations);
+  it took 207.85 ms on this host and performed zero database writes.
+- `pip-audit` is not installed in this environment. A previous local npm production audit
+  reported zero vulnerabilities; the latest advisory-endpoint request was unavailable.
+- PostgreSQL migration CI remains configured; no local PostgreSQL service is available on
+  this host for a direct execution.
 
 ## HTTP smoke evidence
 

@@ -11,7 +11,7 @@ class Provenance(BaseModel):
     provider_symbol: str
     retrieved_at: datetime
     market_timestamp: datetime | None = None
-    mode: Literal["live", "fixture"]
+    mode: Literal["live", "fixture", "authorized", "unknown"]
     delayed: bool = True
     validation_status: Literal["valid", "partial", "invalid"] = "valid"
     adjustment_policy: str = "unadjusted"
@@ -141,6 +141,56 @@ class ProviderCapabilityStatus(BaseModel):
     cost_and_limits: str
 
 
+class VnstockFreeOperation(BaseModel):
+    operation: str
+    sdk_route: str | None = None
+    group: str
+    description: str
+    tier: str
+    requires_symbol: bool = False
+    requires_group: bool = False
+    default_source: str | None = None
+    allowed_sources: list[str] = Field(default_factory=list)
+    status: Literal["available", "blocked_without_entitlement"]
+
+
+class VnstockFreeSource(BaseModel):
+    source: str
+    provider: str
+    supported_groups: list[str] = Field(default_factory=list)
+    authentication: str
+    entitlement: str
+    notes: str | None = None
+
+
+class VnstockFreeCatalog(BaseModel):
+    provider_id: str = "vnstock"
+    sdk: str = "vnstock-v5"
+    generated_at: datetime
+    operations: list[VnstockFreeOperation]
+    sources: list[VnstockFreeSource] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class VnstockFreeResponse(BaseModel):
+    status: Literal["SUCCESS", "BLOCKED", "FAILED"]
+    operation: str
+    group: str | None = None
+    symbol: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list)
+    row_count: int = 0
+    source: str | None = None
+    route: str | None = None
+    retrieved_at: datetime | None = None
+    entitlement_tier: str | None = None
+    tier_required: str | None = None
+    error_code: str | None = None
+    message: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    provenance: dict = Field(default_factory=dict)
+
+
 class DataSyncRun(BaseModel):
     id: int
     provider: str
@@ -167,10 +217,22 @@ class DataQualityReport(BaseModel):
     active_securities_count: int
     exchange_distribution: dict[str, int] = Field(default_factory=dict)
     price_observations_count: int
+    price_sessions_count: int = 0
+    price_sources: list[str] = Field(default_factory=list)
+    latest_price_freshness: str = "unknown"
+    latest_price_freshness_basis: str = "unknown"
+    latest_price_session_status: str = "unknown"
+    price_coverage_by_session: dict[str, dict[str, int | float]] = Field(default_factory=dict)
+    price_coverage_by_exchange: dict[str, dict[str, int | float]] = Field(default_factory=dict)
     symbols_with_price_history: int = 0
     symbols_missing_price_history: int = 0
     symbols_with_financial_statements: int = 0
     symbols_missing_financial_statements: int = 0
+    symbols_with_actual_trading_value: int = 0
+    actual_trading_value_observations_count: int = 0
+    missing_actual_trading_value_symbols: list[str] = Field(default_factory=list)
+    symbols_with_market_cap: int = 0
+    missing_market_cap_symbols: list[str] = Field(default_factory=list)
     price_coverage_percent: float = Field(default=0, ge=0, le=100)
     financial_coverage_percent: float = Field(default=0, ge=0, le=100)
     missing_price_symbols: list[str] = Field(default_factory=list)
@@ -202,6 +264,19 @@ class SecuritiesImportResult(BaseModel):
     updated: int
     rejected: int
     errors: list[str]
+
+
+class AuthorizedPriceImportResult(BaseModel):
+    inserted: int
+    updated: int
+    skipped: int
+    rejected: int
+    symbols: list[str] = Field(default_factory=list)
+    source_name: str
+    data_mode: Literal["authorized"] = "authorized"
+    validation_status: Literal["valid", "partial", "rejected"]
+    retrieved_at: datetime
+    errors: list[str] = Field(default_factory=list)
 
 
 class SecuritiesExplorerItem(BaseModel):
@@ -416,7 +491,7 @@ class FinancialStatementPeriod(BaseModel):
 
 class FinancialStatementsResponse(BaseModel):
     symbol: str
-    automatic_sync_status: Literal["available", "blocked"]
+    automatic_sync_status: Literal["available", "live", "blocked"]
     automatic_sync_message: str
     periods: list[FinancialStatementPeriod]
 
@@ -606,6 +681,20 @@ class JobResult(BaseModel):
     attempts: int
     last_error: str | None = None
     next_attempt_at: datetime | None = None
+    provider: str | None = None
+    scope: str | None = None
+    requested_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_code: str | None = None
+    inserted_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
+    error_count: int = 0
+    cursor_from: datetime | None = None
+    cursor_to: datetime | None = None
+    source_freshness: str | None = None
+    idempotency_key: str | None = None
 
 
 class MarketIndexObservation(BaseModel):
@@ -738,6 +827,7 @@ class SectorIntelligenceResponse(BaseModel):
     source: str | None = None
     data_mode: str = "unavailable"
     validation_status: str = "unvalidated"
+    freshness: str = "unknown"
     taxonomy_version: str = "registry-v1"
     coverage: dict[str, int | float] = Field(default_factory=dict)
     sort_by: str = "performance_1d"
@@ -763,6 +853,7 @@ class LiquidityResponse(BaseModel):
     source: str | None = None
     data_mode: str = "unavailable"
     validation_status: str = "unvalidated"
+    freshness: str = "unknown"
     coverage: dict[str, int | float] = Field(default_factory=dict)
     total_volume: int | None = None
     average_volume_5: float | None = None
@@ -834,7 +925,7 @@ class MarketScenariosResponse(BaseModel):
 class MarketOverview(BaseModel):
     status: Literal["available", "partial", "unavailable"]
     as_of: datetime | None = None
-    source_mode: Literal["live", "fixture", "mixed", "unknown"] = "unknown"
+    source_mode: Literal["live", "fixture", "authorized", "mixed", "unknown"] = "unknown"
     sources: list[str] = Field(default_factory=list)
     active_stock_count: int = 0
     stocks_with_two_sessions: int = 0

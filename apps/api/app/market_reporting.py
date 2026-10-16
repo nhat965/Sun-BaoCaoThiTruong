@@ -103,7 +103,9 @@ def build_market_overview() -> MarketOverview:
                 source=latest.provider,
             )
         )
-    normalized_modes = {mode for mode in source_modes if mode in {"live", "fixture"}}
+    normalized_modes = {
+        mode for mode in source_modes if mode in {"live", "fixture", "authorized"}
+    }
     source_mode = (
         next(iter(normalized_modes))
         if len(normalized_modes) == 1

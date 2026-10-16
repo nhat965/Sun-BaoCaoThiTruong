@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from app.config import Settings
 from app.connectors.base import DataCapability
@@ -101,5 +102,52 @@ class AuthorizedCsvFinancialProvider(FinancialStatementProvider):
             source_name=self.name,
             source_host=source_host,
             content=payload,
+            retrieved_at=datetime.now(UTC),
+        )
+
+
+class FiinGroupFinancialProvider(FinancialStatementProvider):
+    """FiinGroup boundary requiring a contract-approved endpoint and entitlement.
+
+    The public documentation describes capabilities, but not a universally usable
+    endpoint for this deployment. Operators therefore provide the exact endpoint
+    template and an authorized fetcher; otherwise this provider stays BLOCKED.
+    """
+
+    provider_id = "fiingroup"
+    name = "FiinGroup Datafeed"
+
+    def __init__(self, settings: Settings, *, fetcher: Callable[[str, str], str] | None = None) -> None:
+        self.settings = settings
+        self.fetcher = fetcher
+
+    def fetch(self, symbol: str) -> FinancialFetchResult:
+        template = self.settings.fiingroup_financial_endpoint_template
+        api_key = self.settings.fiingroup_api_key
+        if not template or not api_key or not self.settings.fiingroup_rights_confirmed:
+            raise FinancialProviderError(
+                "BLOCKED: configure a contract-approved FiinGroup endpoint, credential, "
+                "and FIINGROUP_RIGHTS_CONFIRMED=true."
+            )
+        if self.fetcher is None:
+            raise FinancialProviderError(
+                "BLOCKED: FiinGroup fetcher is not enabled until the response contract is recorded."
+            )
+        try:
+            url = template.format(symbol=symbol.strip().upper())
+        except (KeyError, ValueError) as exc:
+            raise FinancialProviderError("FiinGroup endpoint template must contain {symbol}.") from exc
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise FinancialProviderError("FiinGroup endpoint must be HTTPS without embedded credentials.")
+        try:
+            content = self.fetcher(url, api_key)
+        except Exception as exc:  # pragma: no cover - provider boundary
+            raise FinancialProviderError("FiinGroup financial request failed.") from exc
+        return FinancialFetchResult(
+            provider_id=self.provider_id,
+            source_name=self.name,
+            source_host=parsed.hostname,
+            content=content,
             retrieved_at=datetime.now(UTC),
         )

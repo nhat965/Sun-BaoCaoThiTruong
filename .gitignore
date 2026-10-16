@@ -1,11 +1,14 @@
 .env
 .venv/
+.tools/
+.runtime/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 .playwright-cli/
 *.pyc
 *.db
+*.log
 node_modules/
 .next/
 coverage/

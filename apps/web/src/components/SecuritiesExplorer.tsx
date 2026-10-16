@@ -282,8 +282,9 @@ export function SecuritiesExplorer({
         </div>
       </div>
       <p className="explorer-provenance">
-        Danh mục bootstrap có 13 mã và có thể mở rộng bằng CSV/XLSX được phép qua API quản trị.
-        Giá, định giá và timestamp chỉ hiển thị khi database có bản ghi tương ứng.
+        Danh mục được phân trang và lọc ở server theo securities master hiện có
+        ({result ? integer.format(result.total) : "—"} mã). Giá, định giá và timestamp chỉ hiển thị
+        khi database có bản ghi tương ứng; ô trống không được suy đoán.
       </p>
     </section>
   );

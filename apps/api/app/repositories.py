@@ -43,7 +43,9 @@ from app.schemas import (
     FinancialTrendResponse,
     FinancialValidationReport,
     NewsItem,
+    PriceBar,
     PriceSeries,
+    Provenance,
     Security,
 )
 from app.text import normalize_vietnamese
@@ -135,19 +137,34 @@ class SecuritiesRepository:
         if row is None:
             row = SecurityRecord(symbol=security.symbol.upper())
             self.session.add(row)
-        row.name = security.name
-        row.normalized_name = normalize_vietnamese(security.name)
-        row.aliases_json = json.dumps(security.aliases, ensure_ascii=False)
-        row.exchange = security.exchange.upper()
-        row.industry = security.industry
-        row.sector = security.sector
+        if security.name.strip():
+            row.name = security.name
+            row.normalized_name = normalize_vietnamese(security.name)
+        if security.aliases:
+            row.aliases_json = json.dumps(security.aliases, ensure_ascii=False)
+        row.exchange = security.exchange.upper() or row.exchange
+        # A provider response is allowed to omit optional taxonomy fields. Do
+        # not erase a richer existing classification with nulls during replay.
+        if security.industry is not None:
+            row.industry = security.industry
+        if security.sector is not None:
+            row.sector = security.sector
         row.listing_status = security.listing_status
         row.security_type = security.security_type
-        row.provider_ids_json = json.dumps(security.provider_ids)
-        row.source_name = security.source_name or "user-authorized-import"
-        row.source_url = security.source_url
+        try:
+            existing_provider_ids = json.loads(row.provider_ids_json or "{}")
+        except (TypeError, ValueError):
+            existing_provider_ids = {}
+        if not isinstance(existing_provider_ids, dict):
+            existing_provider_ids = {}
+        existing_provider_ids.update(security.provider_ids)
+        row.provider_ids_json = json.dumps(existing_provider_ids)
+        row.source_name = security.source_name or row.source_name or "user-authorized-import"
+        if security.source_url is not None:
+            row.source_url = security.source_url
         row.last_updated = security.last_updated or datetime.now(UTC)
-        row.currency = security.currency
+        if security.currency:
+            row.currency = security.currency
         self.session.flush()
         return security_schema(row), inserted
 
@@ -162,6 +179,104 @@ class IngestionCounts:
 class PriceRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def persisted_series(self, symbol: str, limit: int = 260) -> PriceSeries | None:
+        """Return the latest persisted OHLCV series for a security.
+
+        This is deliberately a read-only fallback for analysis when an upstream
+        provider is unavailable.  It selects one provider/interval/adjustment
+        stream and retains the source metadata stored with each observation.
+        No values are synthesized or recalculated here.
+        """
+        security_row = self.session.scalar(
+            select(SecurityRecord).where(SecurityRecord.symbol == symbol.strip().upper())
+        )
+        if security_row is None:
+            return None
+        latest = self.session.scalar(
+            select(PriceObservation)
+            .where(PriceObservation.security_id == security_row.id)
+            .order_by(
+                PriceObservation.market_timestamp.desc(),
+                PriceObservation.ingested_at.desc(),
+                PriceObservation.id.desc(),
+            )
+        )
+        if latest is None:
+            return None
+        rows = list(
+            self.session.scalars(
+                select(PriceObservation)
+                .where(
+                    PriceObservation.security_id == security_row.id,
+                    PriceObservation.provider_id == latest.provider_id,
+                    PriceObservation.interval == latest.interval,
+                    PriceObservation.adjusted == latest.adjusted,
+                )
+                .order_by(PriceObservation.market_timestamp.desc(), PriceObservation.id.desc())
+                .limit(limit)
+            ).all()
+        )
+        if not rows:
+            return None
+        rows.reverse()
+
+        def as_utc(value: datetime | None) -> datetime | None:
+            if value is None or value.tzinfo is not None:
+                return value
+            # SQLite drops timezone metadata even though ingestion stores UTC.
+            return value.replace(tzinfo=UTC)
+
+        bars = [
+            PriceBar(
+                timestamp=as_utc(row.market_timestamp),
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+                volume=int(row.volume),
+                actual_trading_value=(
+                    float(row.actual_trading_value)
+                    if row.actual_trading_value is not None
+                    else None
+                ),
+                market_cap=float(row.market_cap) if row.market_cap is not None else None,
+            )
+            for row in rows
+        ]
+        latest = rows[-1]
+        mode = latest.source_mode if latest.source_mode in {"live", "fixture", "authorized"} else "unknown"
+        return PriceSeries(
+            security=security_schema(security_row),
+            interval=latest.interval,
+            adjusted=latest.adjusted,
+            bars=bars,
+            provenance=Provenance(
+                source=latest.provider,
+                provider_id=latest.provider_id,
+                source_url=latest.source_url,
+                provider_symbol=latest.provider_symbol,
+                retrieved_at=max(as_utc(row.ingested_at) for row in rows),
+                market_timestamp=as_utc(latest.market_timestamp),
+                mode=mode,
+                delayed=True,
+                validation_status=(
+                    "valid"
+                    if all(row.validation_status == "valid" for row in rows)
+                    else "partial"
+                ),
+                adjustment_policy=latest.adjustment_policy,
+                coverage=latest.coverage,
+                freshness="historical",
+                last_updated=max(
+                    (as_utc(row.last_updated) or as_utc(row.ingested_at)) for row in rows
+                ),
+                notes=(
+                    "Served from persisted observations after the configured upstream "
+                    "provider failed; this response is historical/delayed, not realtime."
+                ),
+            ),
+        )
 
     def upsert_series(self, series: PriceSeries) -> int:
         return self.upsert_series_with_counts(series).inserted
