@@ -143,10 +143,14 @@ class ProviderCapabilityStatus(BaseModel):
 
 class VnstockFreeOperation(BaseModel):
     operation: str
+    sdk_route: str | None = None
     group: str
     description: str
     tier: str
     requires_symbol: bool = False
+    requires_group: bool = False
+    default_source: str | None = None
+    allowed_sources: list[str] = Field(default_factory=list)
     status: Literal["available", "blocked_without_entitlement"]
 
 
@@ -183,6 +187,7 @@ class VnstockFreeResponse(BaseModel):
     tier_required: str | None = None
     error_code: str | None = None
     message: str | None = None
+    metadata: dict = Field(default_factory=dict)
     provenance: dict = Field(default_factory=dict)
 
 

@@ -1361,9 +1361,10 @@ def vnstock_free_catalog() -> VnstockFreeCatalog:
         operations=operation_catalog(),
         sources=source_catalog(),
         notes=[
-            "Community routes are read-only and require a permitted vci/kbs upstream source.",
+            "The official Community policy exposes 42 routes (41 active after the removed gold route); aliases expose the same upstream route without duplicating data.",
+            "Each operation declares its SDK route, default source and allowed sources; the gateway does not silently switch providers.",
             "Expanded/Bronze routes are shown for transparency and return BLOCKED without entitlement.",
-            "Responses are not persisted into canonical tables until schema, units and provenance are validated.",
+            "Responses are not persisted into canonical tables until schema, units and provenance are validated; SDK cap metadata is returned when available.",
         ],
     )
 

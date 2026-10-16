@@ -67,7 +67,9 @@ The API now exposes a read-only, named allow-list for the Vnstock v5 Community
 surfaces. It is intentionally separate from the canonical OHLCV/financial
 tables: the response is returned with `source`, `route`, `retrieved_at` and a
 `persisted=false` provenance marker until the upstream schema, unit and
-reporting scope have been validated.
+reporting scope have been validated. The response also returns tier-limit
+metadata (`tier_cap_*`, `cap_*`, `request_*`) when the SDK exposes it, so a
+caller can see that a result was shortened instead of treating it as complete.
 
 ```text
 GET /api/v1/vnstock/free/catalog
@@ -81,9 +83,12 @@ and entitlement for each source.
 The catalog includes the documented free groups: reference (company/listing,
 industry, index, ETF/futures/warrant/bond lists and events), market (equity,
 index, futures, warrant, ETF and bond quote/OHLCV/trades, multi-symbol quote,
-and the documented global instrument OHLCV surfaces), and Fundamental income
-statement, balance sheet and cash flow. Community market requests are limited
-to permitted domestic routes (`vci`/`kbs`) by the official documentation.
+and the documented global instrument OHLCV surfaces), Fundamental income
+statement/balance sheet/cash flow, and Vietcombank retail exchange rates. The
+official policy describes 42 Community routes; one legacy gold route is
+removed, so 41 routes currently return data. The project keeps asset-specific
+aliases (ETF/bond/futures) in the catalog while exposing their canonical
+upstream route in `sdk_route`.
 
 Insights, Macro, Analytics valuation, ratios and flow/order-book extensions are
 shown in the catalog as `blocked_without_entitlement`; the gateway will never
@@ -97,8 +102,9 @@ local CLI may still report Guest/unauthenticated when its profile differs from
 the running backend, so credentials and entitlement must be re-verified before
 batch ingestion or publication.
 
-The free catalog also includes `reference.search_symbol`, index descriptions,
-and `retail.exchange_rate` (Vietcombank). Financial statements accept
+The free catalog also includes `reference.search_symbol`,
+`reference.search_info`, index descriptions/members-by-group, and
+`retail.exchange_rate` (Vietcombank). Financial statements accept
 `period=year|quarter` and `format=long|wide|time_series`; the Community tier is
 limited to the most recent eight periods and the reduced level-1 VAS set.
 `ratio`, `note`, `financial_health`, annual plans and single derivative/bond
@@ -114,3 +120,17 @@ Source routing is explicit: domestic equity/financial/reference requests use
 `vci` or `kbs`; crypto uses `binance`; forex, commodities and global indices
 use `dukascopy`; local market calendars use `builtin`; Retail uses `vcb`.
 The gateway does not silently fall back between sources.
+
+To verify every Community route without writing application tables, run the
+read-only probe after the API process has been registered with a Community key:
+
+```powershell
+cd apps/api
+..\\..\\.tools\\python\\python.exe scripts/vnstock_free_probe.py `
+  --max-operations 42 `
+  --output ..\\..\\.runtime\\vnstock_free_probe.json
+```
+
+The probe records `SUCCESS`, `BLOCKED` or `FAILED` separately for each route,
+including source, SDK route, timestamp and truncation metadata. A probe cannot
+turn an unavailable symbol, quota error or missing entitlement into a success.

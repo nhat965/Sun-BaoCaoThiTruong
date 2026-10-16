@@ -50,6 +50,15 @@ def test_catalog_separates_community_and_expanded_operations():
     }
 
 
+def test_catalog_covers_documented_free_aliases_and_source_policies():
+    catalog = {row["operation"]: row for row in free.operation_catalog()}
+    assert catalog["reference.company_overview"]["sdk_route"] == "fundamental.company.overview"
+    assert catalog["reference.search_info"]["default_source"] == "dukascopy"
+    assert catalog["reference.index_list"]["default_source"] == "builtin"
+    assert catalog["reference.index_members"]["requires_group"] is True
+    assert catalog["market.futures_quote"]["allowed_sources"] == ["kbs"]
+
+
 def test_expanded_route_is_blocked_without_calling_sdk(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("Expanded route must not call the SDK")
@@ -62,8 +71,9 @@ def test_expanded_route_is_blocked_without_calling_sdk(monkeypatch):
 
 def test_community_rejects_non_permitted_source_without_calling_sdk(monkeypatch):
     monkeypatch.setattr(free, "_VnReference", lambda: (_ for _ in ()).throw(AssertionError()))
-    settings = Settings(vnstock_reference_source="vnd")
-    result = asyncio.run(free.fetch_free_operation("reference.equity_list", settings=settings))
+    result = asyncio.run(
+        free.fetch_free_operation("reference.equity_list", settings=Settings(), source="kbs")
+    )
     assert result["status"] == "BLOCKED"
     assert result["error_code"] == "SOURCE_NOT_AVAILABLE_ON_COMMUNITY"
 

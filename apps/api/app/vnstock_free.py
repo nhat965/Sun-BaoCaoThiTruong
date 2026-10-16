@@ -44,9 +44,13 @@ class FreeOperation:
     group: str
     description: str
     requires_symbol: bool = False
+    requires_group: bool = False
     tier: str = "Community"
     requires_source: bool = False
     source_kind: str = "reference"
+    sdk_route: str | None = None
+    default_source: str | None = None
+    allowed_sources: tuple[str, ...] = ()
 
 
 # This is the allow-list supported by the official v5 Community documentation.
@@ -54,6 +58,7 @@ class FreeOperation:
 # are not called with a free account.
 FREE_OPERATIONS: tuple[FreeOperation, ...] = (
     FreeOperation("reference.company_info", "reference", "Company overview", True),
+    FreeOperation("reference.company_overview", "reference", "Company overview (alias)", True, sdk_route="fundamental.company.overview"),
     FreeOperation("reference.company_officers", "reference", "Company officers", True),
     FreeOperation("reference.company_shareholders", "reference", "Company shareholders", True),
     FreeOperation("reference.company_ownership", "reference", "Ownership structure", True),
@@ -72,8 +77,10 @@ FREE_OPERATIONS: tuple[FreeOperation, ...] = (
     FreeOperation("reference.index_groups", "reference", "Index groups"),
     FreeOperation("reference.index_info", "reference", "Index information", True),
     FreeOperation("reference.index_description", "reference", "Index description", True),
-    FreeOperation("reference.index_members", "reference", "Index members", True),
+    FreeOperation("reference.index_members", "reference", "Index members", requires_group=True),
     FreeOperation("reference.search_symbol", "reference", "International symbol search", True),
+    FreeOperation("reference.search_info", "reference", "International symbol information", True),
+    FreeOperation("reference.index_list_by_group", "reference", "Index members by group", requires_group=True, sdk_route="reference.market.symbols_by_group"),
     FreeOperation("reference.etf_list", "reference", "ETF list"),
     FreeOperation("reference.futures_list", "reference", "Futures list"),
     FreeOperation("reference.warrant_list", "reference", "Warrant list"),
@@ -129,14 +136,92 @@ EXPANDED_OPERATIONS: tuple[FreeOperation, ...] = (
 _OPERATIONS = {item.operation: item for item in (*FREE_OPERATIONS, *EXPANDED_OPERATIONS)}
 
 
+_DEFAULT_SOURCES: dict[str, str] = {
+    # Reference routes with a fixed documented source.
+    "reference.equity_list": "vci",
+    "reference.equity_list_by_exchange": "vci",
+    "reference.equity_list_by_industry": "vci",
+    "reference.industry_list": "vci",
+    "reference.industry_sectors": "vci",
+    "reference.index_list": "builtin",
+    "reference.index_info": "builtin",
+    "reference.index_description": "builtin",
+    "reference.index_groups": "kbs",
+    "reference.events_calendar": "vci",
+    "reference.events_market": "builtin",
+    "reference.market_status": "builtin",
+    "reference.search_symbol": "dukascopy",
+    "reference.search_info": "dukascopy",
+    "reference.company_ownership": "kbs",
+    "reference.company_capital_history": "kbs",
+    "reference.company_insider_trading": "kbs",
+    # Vnstock's quote surface defaults to KBS; historical bars default to VCI.
+    "market.equity_quote": "kbs",
+    "market.multi_quote": "kbs",
+    "market.index_ohlcv": "kbs",
+    "market.futures_quote": "kbs",
+    "market.futures_trades": "kbs",
+    "market.warrant_quote": "kbs",
+    "market.warrant_trades": "kbs",
+    "retail.exchange_rate": "vcb",
+}
+
+
+_ALLOWED_SOURCES: dict[str, tuple[str, ...]] = {
+    "reference.equity_list": ("vci",),
+    "reference.equity_list_by_exchange": ("vci",),
+    "reference.equity_list_by_industry": ("vci",),
+    "reference.industry_list": ("vci",),
+    "reference.industry_sectors": ("vci",),
+    "reference.index_list": ("builtin",),
+    "reference.index_info": ("builtin",),
+    "reference.index_description": ("builtin",),
+    "reference.index_groups": ("kbs",),
+    "reference.events_calendar": ("vci",),
+    "reference.events_market": ("builtin",),
+    "reference.market_status": ("builtin",),
+    "reference.search_symbol": ("dukascopy",),
+    "reference.search_info": ("dukascopy",),
+    "reference.company_ownership": ("kbs", "vci"),
+    "reference.company_capital_history": ("kbs", "vci"),
+    "reference.company_insider_trading": ("kbs", "vci"),
+    "market.equity_quote": ("kbs", "vci"),
+    "market.multi_quote": ("kbs", "vci"),
+    "market.equity_ohlcv": ("vci", "kbs"),
+    "market.equity_trades": ("vci", "kbs"),
+    "market.index_ohlcv": ("kbs", "vci"),
+    "market.futures_ohlcv": ("kbs", "vci"),
+    "market.futures_quote": ("kbs",),
+    "market.futures_trades": ("kbs",),
+    "market.warrant_ohlcv": ("kbs", "vci"),
+    "market.warrant_quote": ("kbs",),
+    "market.warrant_trades": ("kbs",),
+    "market.etf_ohlcv": ("vci", "kbs"),
+    "market.etf_quote": ("kbs", "vci"),
+    "market.etf_trades": ("vci", "kbs"),
+    "market.bond_ohlcv": ("vci", "kbs"),
+    "market.bond_quote": ("kbs", "vci"),
+    "market.bond_trades": ("vci", "kbs"),
+    "market.global_index_ohlcv": ("dukascopy",),
+    "market.crypto_ohlcv": ("binance",),
+    "market.forex_ohlcv": ("dukascopy",),
+    "market.commodity_ohlcv": ("dukascopy",),
+    "retail.exchange_rate": ("vcb",),
+}
+
+
 def operation_catalog() -> list[dict[str, Any]]:
     return [
         {
             "operation": item.operation,
+            "sdk_route": item.sdk_route or item.operation,
             "group": item.group,
             "description": item.description,
             "tier": item.tier,
             "requires_symbol": item.requires_symbol,
+            "requires_group": item.requires_group,
+            "default_source": _DEFAULT_SOURCES.get(item.operation),
+            "allowed_sources": list(_ALLOWED_SOURCES.get(item.operation, ("vci", "kbs"))),
             "status": "available" if item.tier == "Community" else "blocked_without_entitlement",
         }
         for item in _OPERATIONS.values()
@@ -238,9 +323,14 @@ def _records(frame: Any, limit: int) -> tuple[list[str], list[dict[str, Any]]]:
     return columns, rows
 
 
-def _attrs(frame: Any, fallback_source: str | None) -> tuple[str | None, str | None]:
+def _attrs(frame: Any, fallback_source: str | None) -> tuple[str | None, str | None, dict[str, Any]]:
     attrs = getattr(frame, "attrs", {}) or {}
-    return attrs.get("source") or fallback_source, attrs.get("route")
+    metadata = {
+        str(key): _json_value(value)
+        for key, value in attrs.items()
+        if str(key).startswith(("tier_", "grant_", "cap_", "request_"))
+    }
+    return attrs.get("source") or fallback_source, attrs.get("route"), metadata
 
 
 def _call_with_supported(method: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
@@ -261,6 +351,17 @@ def _call_with_supported(method: Callable[..., Any], kwargs: dict[str, Any]) -> 
 
 
 def _source(settings: Settings, group: str, operation: str | None = None) -> str | None:
+    if operation in _DEFAULT_SOURCES:
+        fixed = _DEFAULT_SOURCES[operation]
+        if fixed in {"builtin", "dukascopy", "binance", "vcb"}:
+            return fixed
+        if len(_ALLOWED_SOURCES.get(operation, ())) == 1:
+            return fixed
+        if group == "market":
+            return settings.vnstock_market_source or fixed
+        if group in {"reference", "fundamental"}:
+            return settings.vnstock_reference_source or fixed
+        return fixed
     if group == "market":
         if operation and operation.startswith("market.crypto_"):
             return "binance"
@@ -285,6 +386,18 @@ def _source(settings: Settings, group: str, operation: str | None = None) -> str
     return None
 
 
+def _allowed_sources(item: FreeOperation) -> tuple[str, ...]:
+    if item.operation in _ALLOWED_SOURCES:
+        return _ALLOWED_SOURCES[item.operation]
+    if item.group == "retail":
+        return ("vcb",)
+    if item.operation.startswith("market.crypto_"):
+        return ("binance",)
+    if item.operation.startswith(("market.forex_", "market.commodity_", "market.global_index_")):
+        return ("dukascopy",)
+    return ("vci", "kbs")
+
+
 def _client_for(item: FreeOperation, symbol: str | None) -> tuple[Any, Any]:
     if item.group == "reference":
         if _VnReference is None:
@@ -298,7 +411,7 @@ def _client_for(item: FreeOperation, symbol: str | None) -> tuple[Any, Any]:
             "reference.index_info",
             "reference.index_description",
             "reference.index_members",
-        }:
+        } and symbol:
             if not symbol:
                 raise ValueError("symbol is required")
             return reference.index(symbol), None
@@ -342,14 +455,12 @@ def _invoke(item: FreeOperation, symbol: str | None, source: str | None, limit: 
             return _call_with_supported(target, {"source": source, **kwargs})
         if name.startswith("index_"):
             suffix = name.removeprefix("index_")
-            target = (
-                getattr(client, suffix)
-                if name in {"index_info", "index_description", "index_members"}
-                else getattr(client.index, suffix)
-            )
+            target_client = client if hasattr(client, suffix) else client.index
+            target = getattr(target_client, suffix)
             return _call_with_supported(target, {"symbol": symbol, "source": source, **kwargs})
-        if name == "search_symbol":
-            return _call_with_supported(client.search.symbol, {"query": symbol})
+        if name.startswith("search_"):
+            target = getattr(client.search, name.removeprefix("search_"))
+            return _call_with_supported(target, {"query": symbol, "symbol": symbol, **kwargs})
         if name == "market_status":
             return _call_with_supported(client.market.status, kwargs)
         if name in {"etf_list", "futures_list", "warrant_list", "bond_list"}:
@@ -410,24 +521,17 @@ async def fetch_free_operation(
             "tier_required": item.tier,
             "message": "Official Vnstock documentation marks this route as non-Community.",
         }
+    extras = extra or {}
     if item.requires_symbol and not symbol:
         return {"status": VnstockFreeStatus.FAILED, "error_code": "SYMBOL_REQUIRED", "operation": operation}
+    if item.requires_group and not symbol and not extras.get("group"):
+        return {"status": VnstockFreeStatus.FAILED, "error_code": "GROUP_REQUIRED", "operation": operation}
     # Reference lists can legitimately exceed 500 rows (the current HOSE
     # universe is ~400 symbols). Keep a defensive upper bound while allowing
     # an operator's read-only reconciliation to receive the complete list.
     bounded_limit = max(1, min(limit, 5_000))
     selected_source = source or _source(settings, item.group, operation)
-    allowed_sources = {"vci", "kbs"}
-    if item.group == "retail":
-        allowed_sources = {"vcb"}
-    elif operation.startswith("market.crypto_"):
-        allowed_sources = {"binance"}
-    elif operation.startswith(
-        ("market.forex_", "market.commodity_", "market.global_index_")
-    ):
-        allowed_sources = {"dukascopy"}
-    elif selected_source == "builtin":
-        allowed_sources = {"builtin"}
+    allowed_sources = set(_allowed_sources(item))
     if selected_source and selected_source.lower() not in allowed_sources:
         return {
             "status": VnstockFreeStatus.BLOCKED,
@@ -441,10 +545,10 @@ async def fetch_free_operation(
     retrieved_at = datetime.now(UTC)
     try:
         frame = await asyncio.to_thread(
-            _invoke, item, symbol, selected_source, bounded_limit, period, extra or {}
+            _invoke, item, symbol, selected_source, bounded_limit, period, extras
         )
         columns, rows = _records(frame, bounded_limit)
-        source_name, route = _attrs(frame, selected_source)
+        source_name, route, metadata = _attrs(frame, selected_source)
         return {
             "status": VnstockFreeStatus.SUCCESS if rows else VnstockFreeStatus.BLOCKED,
             "operation": operation,
@@ -457,6 +561,7 @@ async def fetch_free_operation(
             "route": route,
             "retrieved_at": retrieved_at,
             "entitlement_tier": item.tier,
+            "metadata": metadata,
             "provenance": {
                 "provider_id": "vnstock",
                 "sdk": "vnstock-v5",
@@ -465,6 +570,7 @@ async def fetch_free_operation(
                 "mode": "live",
                 "persisted": False,
                 "notes": "Read-only response; canonical database persistence requires a typed importer and unit validation.",
+                "sdk_attributes": metadata,
             },
             "message": None if rows else "No rows returned; entitlement/source/schema must be checked.",
         }
@@ -472,10 +578,13 @@ async def fetch_free_operation(
         # Provider-specific exceptions are intentionally handled at this boundary
         # so credentials and raw upstream payloads never enter API responses.
         name = type(exc).__name__.lower()
-        blocked = any(token in name for token in ("entitlement", "ratelimit", "forbidden", "unauthor"))
+        code = str(getattr(exc, "code", "") or getattr(exc, "error_code", ""))
+        blocked = any(token in name for token in ("entitlement", "ratelimit", "forbidden", "unauthor")) or code.startswith(
+            ("VNSTOCK_TIER_", "VNSTOCK_AUTH_")
+        )
         return {
             "status": VnstockFreeStatus.BLOCKED if blocked else VnstockFreeStatus.FAILED,
-            "error_code": "ENTITLEMENT_REQUIRED" if blocked else "UPSTREAM_ERROR",
+            "error_code": code or ("ENTITLEMENT_REQUIRED" if blocked else "UPSTREAM_ERROR"),
             "operation": operation,
             "group": item.group,
             "symbol": symbol,
